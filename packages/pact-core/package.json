@@ -10,5 +10,14 @@
   "devDependencies": {
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./policy": "./src/policy.ts",
+    "./demo-scenarios": "./src/demo-scenarios.ts",
+    "./channel3": "./src/channel3.ts",
+    "./merchant-evidence": "./src/merchant-evidence.ts",
+    "./settlement-state": "./src/settlement-state.ts",
+    "./settlement-demo": "./src/settlement-demo.ts"
   }
 }

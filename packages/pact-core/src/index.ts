@@ -41,10 +41,16 @@ export interface Evidence {
   claim: string;
   value: string | number | boolean;
   provenanceRef?: string;
+  /** Field in the offer snapshot that this evidence supports, e.g. "total" or "attributes.ramGb". */
+  field?: string;
+  /** Stable offer/product reference this evidence belongs to. Must match the evaluated offer ID. */
+  subjectRef?: string;
 }
 
 export interface ConstraintResult {
   constraintId: string;
+  /** Missing severity is treated as hard for backwards-compatible fail-closed behavior. */
+  severity?: ConstraintSeverity;
   status: VerificationStatus;
   actual?: string | number | boolean;
   evidenceIds: string[];
@@ -65,6 +71,7 @@ export type SettlementDecision =
   | { decision: "block"; reason: string };
 
 export function decideSettlement(input: VerificationResult): SettlementDecision {
+  // This function returns a policy decision only. It never calls a payment API.
   if (!input.securityClear) {
     return { decision: "block", reason: "security_policy_block" };
   }
@@ -77,7 +84,17 @@ export function decideSettlement(input: VerificationResult): SettlementDecision 
     return { decision: "block", reason: "evidence_not_attributable" };
   }
 
-  const hardFailures = input.results.filter((r) => r.status !== "pass");
+  if (input.results.length === 0) {
+    return { decision: "block", reason: "no_constraints_evaluated" };
+  }
+
+  // Fail closed: legacy results with no severity are treated as hard constraints.
+  const hardResults = input.results.filter((r) => (r.severity ?? "hard") === "hard");
+  if (hardResults.length === 0) {
+    return { decision: "block", reason: "no_hard_constraints" };
+  }
+
+  const hardFailures = hardResults.filter((r) => r.status !== "pass");
   if (hardFailures.length > 0) {
     return {
       decision: "block",

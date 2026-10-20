@@ -3,8 +3,18 @@
   "private": true,
   "packageManager": "pnpm@10.12.4",
   "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm -r lint"
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down"
+  },
+  "dependencies": {
+    "@pactpay/pact-core": "workspace:*",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
   }
 }
