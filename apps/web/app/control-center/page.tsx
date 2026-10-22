@@ -20,6 +20,7 @@ type TransactionRow = {
   policy_run_id: string | null;
   pact_hash: string | null;
   capture_origin: string | null;
+  autonomy_label?: string | null;
   created_at: string;
   authorized_at: string | null;
   captured_at: string | null;
@@ -124,6 +125,7 @@ export default function ControlCenterPage() {
     { field: "authorization_status", headerName: "Authorization", minWidth: 135 },
     { field: "capture_status", headerName: "Capture", minWidth: 120 },
     { field: "order_id", headerName: "PayPal order", minWidth: 155, valueFormatter: (p) => compactId(p.value) },
+    { field: "autonomy_label", headerName: "Agent autonomy", minWidth: 190, valueFormatter: (p) => p.value ?? "—", cellStyle: (p) => ({ color: p.value === "Handles it within rules" ? "#7fe2ab" : p.value ? "#bfe9d3" : "#8aa99b", fontWeight: 700 }) },
     { field: "capture_origin", headerName: "Origin", minWidth: 140, valueFormatter: (p) => p.value === "PACTPAY_GATE" ? "PactPay gate" : p.value === "EXTERNAL_WEBHOOK" ? "PayPal webhook" : p.value ?? "—" },
     { field: "created_at", headerName: "Created", minWidth: 180, valueFormatter: (p) => dateTime(p.value) },
   ], []);
@@ -256,7 +258,7 @@ export default function ControlCenterPage() {
                 ["PayPal order", selected.row.order_id ?? "—"], ["Authorization", `${selected.row.authorization_status ?? "—"} · ${selected.row.authorization_id ?? "—"}`],
                 ["Capture", `${selected.row.capture_status ?? "—"} · ${selected.row.capture_id ?? "—"}`], ["Void", selected.row.void_status ?? "—"],
                 ["Offer snapshot", selected.row.offer_snapshot_id ?? "—"], ["Pact hash", selected.row.pact_hash ?? "—"],
-                ["Capture origin", selected.row.capture_origin ?? "—"], ["Created", dateTime(selected.row.created_at)],
+                ["Capture origin", selected.row.capture_origin ?? "—"], ["Agent autonomy", selected.row.autonomy_label ?? "—"], ["Created", dateTime(selected.row.created_at)],
                 ["Captured at", dateTime(selected.row.captured_at)], ["Voided at", dateTime(selected.row.voided_at)],
               ].map(([label, value]) => <div key={label} style={{ padding: 12, border: "1px solid #28443a", borderRadius: 10, background: "#091512", minWidth: 0 }}><div style={{ color: "#7c9387", fontSize: 11, marginBottom: 6 }}>{label}</div><div style={{ fontSize: 13, fontWeight: 750, overflowWrap: "anywhere" }}>{value}</div></div>)}
             </div>

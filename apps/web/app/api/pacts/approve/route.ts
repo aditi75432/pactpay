@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { PurchasePact } from "@pactpay/pact-core";
+import { parseAutonomy } from "@pactpay/pact-core/autonomy";
 import { createPactApproval } from "../../../../../../lib/pact-approvals";
 import { sanitizePurchasePact } from "../../../../../../lib/intent-pact";
 import { enforceRateLimit } from "../../../../lib/request-guard";
@@ -41,6 +42,8 @@ export async function POST(request: Request) {
     if (!sanitized.constraints.some((rule) => rule.severity === "hard")) {
       return NextResponse.json({ error: "Add at least one must-have (hard) rule before approving. Without one, PactPay can never release payment." }, { status: 422 });
     }
+    // Malformed or missing autonomy always becomes the safest mode (the shopper releases every payment).
+    const autonomy = parseAutonomy(body.autonomy);
     const sessionId = await ensureSessionId();
     const approvalId = randomUUID();
     // Every approval gets its own Pact id. Two approvals can never share an id or a hash, so the
@@ -64,8 +67,9 @@ export async function POST(request: Request) {
       pact,
       originalIntent: shortText(body.originalIntent, 1200),
       compiler: shortText(body.compiler, 40),
+      autonomy,
     });
-    return NextResponse.json({ approvalId: stored.id, pactHash: stored.pactHash, pact }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ approvalId: stored.id, pactHash: stored.pactHash, pact, autonomy }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("Pact approval failed", error instanceof Error ? error.message : "unknown error");
     return NextResponse.json({ error: "We couldn't save your approval. Check that the database is running and try again." }, { status: 500 });

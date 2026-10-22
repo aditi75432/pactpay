@@ -21,6 +21,8 @@
     "./settlement-demo": "./src/settlement-demo.ts",
     "./explain": "./src/explain.ts",
     "./rate-limit": "./src/rate-limit.ts",
-    "./checkout-quote": "./src/checkout-quote.ts"
+    "./checkout-quote": "./src/checkout-quote.ts",
+    "./autonomy": "./src/autonomy.ts",
+    "./untrusted-text": "./src/untrusted-text.ts"
   }
 }

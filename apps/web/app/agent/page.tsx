@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { PurchasePact } from "@pactpay/pact-core";
 import { previewChannel3TestQuote } from "@pactpay/pact-core/settlement-demo";
 import { applyCheckoutQuote } from "@pactpay/pact-core/checkout-quote";
+import { describeAutonomy, shouldAutoHold, type Autonomy } from "@pactpay/pact-core/autonomy";
+import { logEvent, readAutonomy, readExcluded } from "../components/agentLog";
 import AppShell from "../components/AppShell";
 import StepTracker from "../components/StepTracker";
 
@@ -305,6 +307,18 @@ export default function ShoppingAgentPage() {
   const [holdError, setHoldError] = useState<string | null>(null);
   const [showOthers, setShowOthers] = useState(false);
   const autoStarted = useRef(false);
+  const [autonomy, setAutonomy] = useState<Autonomy>({ mode: "ASK_ALWAYS", limitUsd: null });
+  const [testAcknowledged, setTestAcknowledged] = useState(false);
+  const [excluded, setExcluded] = useState<string[]>([]);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [autopilotStopped, setAutopilotStopped] = useState(false);
+
+  useEffect(() => {
+    const stored = readAutonomy();
+    setAutonomy(stored.autonomy);
+    setTestAcknowledged(stored.acknowledgedTest);
+    setExcluded(readExcluded());
+  }, []);
 
   useEffect(() => {
     if (loadingPact || !pact || !query.trim() || autoStarted.current) return;
@@ -313,9 +327,12 @@ export default function ShoppingAgentPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingPact, pact, query]);
 
-  async function holdPayment(candidate: Candidate) {
-    if (!acknowledged || holding) return;
+  async function holdPayment(candidate: Candidate, automatic = false) {
+    if (holding) return;
+    if (!automatic && !acknowledged) return;
+    if (automatic && !testAcknowledged) return;
     setHolding(true);
+    if (!automatic) logEvent("you", `Chose “${candidate.offer.productTitle}” from ${candidate.offer.offerDomain} and confirmed test mode.`, `chose:${candidate.offer.snapshotId}`);
     setHoldError(null);
     try {
       let approvalId: string | null = null;
@@ -333,18 +350,46 @@ export default function ShoppingAgentPage() {
       });
       const payload = await response.json() as { approvalUrl?: string; transactionId?: string; error?: string };
       if (!response.ok || !payload.approvalUrl || !payload.transactionId) throw new Error(payload.error ?? "We couldn't place the payment hold.");
+      logEvent("agent", `Placed a PayPal hold of ${money(previewChannel3TestQuote(candidate.offer.price).total, "USD")} (nothing charged) and sent you to PayPal to approve it.`, `hold:${payload.transactionId}`);
       window.location.assign(payload.approvalUrl);
     } catch (caught) {
       setHoldError(caught instanceof Error ? caught.message : "We couldn't place the payment hold.");
       setHolding(false);
+      if (automatic) { setAutopilotStopped(true); setCountdown(null); }
     }
   }
 
-  const ready = candidates.filter((item) => item.refreshed && item.verdict === "PASS").sort((a, b) => b.relevance - a.relevance || a.evaluation.summary.softFailures - b.evaluation.summary.softFailures || a.offer.price - b.offer.price);
+  const ready = candidates.filter((item) => item.refreshed && item.verdict === "PASS" && !excluded.includes(item.offer.snapshotId)).sort((a, b) => b.relevance - a.relevance || a.evaluation.summary.softFailures - b.evaluation.summary.softFailures || a.offer.price - b.offer.price);
   const best = ready[0] ?? null;
   const others = candidates.filter((item) => item.offer.snapshotId !== best?.offer.snapshotId);
   const intentTitle = intent || query;
   const hardRules = pact?.constraints.filter((rule) => rule.severity === "hard" && rule.field !== "currency") ?? [];
+  const bestQuote = best ? previewChannel3TestQuote(best.offer.price) : null;
+  const autoEligible = Boolean(best && bestQuote && best.offer.currency === "USD" && testAcknowledged && shouldAutoHold(autonomy, bestQuote.total));
+  const waitingForYou = Boolean(best && bestQuote && autonomy.mode !== "ASK_ALWAYS" && !autoEligible);
+  const bestId = best?.offer.snapshotId ?? null;
+  const skippedCount = candidates.filter((item) => excluded.includes(item.offer.snapshotId)).length;
+
+  useEffect(() => {
+    if (!finished) return;
+    if (bestId && best) logEvent("agent", `Searched live stores and checked every offer against your rules. ${ready.length} cleared them. Best match: “${best.offer.productTitle}” from ${best.offer.offerDomain} at ${money(best.offer.price, best.offer.currency)}${skippedCount ? ` (skipped ${skippedCount} that already failed)` : ""}.`, `found:${bestId}`);
+    else logEvent("agent", "Searched live stores. No offer cleared every rule with fresh proof, so I stopped instead of guessing.", `none:${candidates.length}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finished, bestId]);
+
+  useEffect(() => {
+    if (!finished || !autoEligible || autopilotStopped) { setCountdown(null); return; }
+    setCountdown(6);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finished, autoEligible, autopilotStopped, bestId]);
+
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) { if (best) void holdPayment(best, true); return; }
+    const timer = window.setTimeout(() => setCountdown((value) => (value === null ? null : value - 1)), 1000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdown]);
 
   function verdictBadge(item: Candidate) {
     if (item.refreshed && item.verdict === "PASS") return <span className="pp-badge pp-badge-good">Matches your rules</span>;
@@ -425,6 +470,31 @@ export default function ShoppingAgentPage() {
           </div>
         )}
 
+        {finished && best && autonomy.mode !== "ASK_ALWAYS" && (
+          <section className="pp-agent-card pp-enter" aria-live="polite" aria-label="Autopilot">
+            <div className="pp-row pp-between">
+              <strong>Autopilot · {describeAutonomy(autonomy).title}</strong>
+              <a href="/" className="pp-link-btn" style={{ color: "#7fe2ab" }}>Change</a>
+            </div>
+            {countdown !== null && !holding && (
+              <>
+                <p style={{ marginTop: 8 }}>I picked this offer. I&apos;m placing the PayPal hold in <strong className="pp-num">{countdown}s</strong>. You won&apos;t be charged: PayPal only holds the money until the safety check passes.</p>
+                <div className="pp-agent-bar" aria-hidden="true"><i style={{ width: `${((6 - countdown) / 6) * 100}%` }} /></div>
+                <div className="pp-row" style={{ marginTop: 14 }}>
+                  <button type="button" className="pp-btn pp-btn-primary pp-btn-sm" onClick={() => best && holdPayment(best, true)}>Hold now</button>
+                  <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => { setAutopilotStopped(true); setCountdown(null); }}>Cancel autopilot</button>
+                </div>
+              </>
+            )}
+            {holding && <p style={{ marginTop: 8 }}><span className="pp-spinner" aria-hidden="true" /> Placing the hold and opening PayPal…</p>}
+            {!holding && countdown === null && waitingForYou && bestQuote && (
+              <p style={{ marginTop: 8 }}>The estimated total is {money(bestQuote.total, "USD")}, above the {money(autonomy.limitUsd ?? 0, "USD")} you let me handle alone. I&apos;m waiting for your OK below.</p>
+            )}
+            {!holding && countdown === null && autopilotStopped && <p style={{ marginTop: 8 }}>Autopilot is paused. Choose the offer yourself below.</p>}
+            {!holding && countdown === null && !waitingForYou && !autopilotStopped && !testAcknowledged && <p style={{ marginTop: 8 }}>I need your test-mode confirmation first. Approve your rules again from the home page.</p>}
+          </section>
+        )}
+
         {best && (
           <section className="pp-card pp-offer-best pp-enter" aria-labelledby="best-title">
             <div className="pp-row pp-between" style={{ marginBottom: 14 }}>
@@ -441,6 +511,7 @@ export default function ShoppingAgentPage() {
               </div>
             </div>
             <p className="pp-small" style={{ marginTop: 14 }}>{best.reason}</p>
+            <SellerClaims offer={best.offer} />
 
             {selected?.offer.snapshotId !== best.offer.snapshotId ? (
               <button type="button" className="pp-btn pp-btn-primary pp-btn-block" style={{ marginTop: 18 }} onClick={() => { setSelected(best); setAcknowledged(false); setHoldError(null); }}>Choose this one</button>
@@ -459,7 +530,7 @@ export default function ShoppingAgentPage() {
             {(showOthers || !best) && (
               <div className="pp-stack" style={{ marginTop: 14 }}>
                 {others.map((item) => {
-                  const canChoose = item.refreshed && item.verdict === "PASS";
+                  const canChoose = item.refreshed && item.verdict === "PASS" && !excluded.includes(item.offer.snapshotId);
                   return (
                     <article className="pp-card-flat pp-offer" key={item.offer.snapshotId}>
                       <OfferImage offer={item.offer} />
@@ -469,7 +540,7 @@ export default function ShoppingAgentPage() {
                           {verdictBadge(item)}
                         </div>
                         <p className="pp-small pp-muted">{item.offer.offerDomain} · <span className="pp-num">{money(item.offer.price, item.offer.currency)}</span></p>
-                        <p className="pp-small" style={{ marginTop: 6 }}>{item.reason}</p>
+                        <p className="pp-small" style={{ marginTop: 6 }}>{excluded.includes(item.offer.snapshotId) ? "Skipped: this offer was blocked on an earlier try, so the agent moved on." : item.reason}</p>
                         {canChoose && selected?.offer.snapshotId !== item.offer.snapshotId && <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" style={{ marginTop: 10 }} onClick={() => { setSelected(item); setAcknowledged(false); setHoldError(null); }}>Choose this one</button>}
                         {canChoose && selected?.offer.snapshotId === item.offer.snapshotId && <HoldPanel candidate={item} acknowledged={acknowledged} setAcknowledged={setAcknowledged} holding={holding} onHold={() => holdPayment(item)} onCancel={() => setSelected(null)} error={holdError} />}
                       </div>
@@ -517,6 +588,103 @@ function HoldPanel(props: { candidate: Candidate; acknowledged: boolean; setAckn
         </button>
         <button type="button" className="pp-btn pp-btn-secondary" onClick={props.onCancel} disabled={props.holding}>Not this one</button>
       </div>
+    </div>
+  );
+}
+
+
+type ClaimsResponse = {
+  available: boolean; reason?: string; error?: string; model?: string;
+  claims: Array<{ field: string; label?: string; value: string | number; unit?: string; quote: string }>;
+  rejected: number; findings: Array<{ rule: string; excerpt: string }>; securityTest: boolean; injectedSentence: string | null;
+};
+const FIELD_LABEL: Record<string, string> = { itemPrice: "Price", shippingFee: "Shipping", returnWindowDays: "Return window", deliveryDays: "Delivery", warrantyMonths: "Warranty", condition: "Condition", brand: "Brand", availability: "Availability" };
+const FINDING_LABEL: Record<string, string> = {
+  "override-instructions": "tries to override your rules", "ignore-the-user": "tells the agent to ignore you", "force-purchase": "tries to force the purchase",
+  "move-money": "asks to move money", "addresses-agent": "speaks to AI agents directly", "role-marker": "fakes a system message", secrecy: "asks to hide things from you", "new-instructions": "claims to be new instructions",
+};
+function claimText(claim: ClaimsResponse["claims"][number]): string {
+  const unit = claim.field === "returnWindowDays" || claim.field === "deliveryDays" ? " days" : claim.field === "warrantyMonths" ? " months" : claim.unit ? ` ${claim.unit}` : "";
+  return claim.field === "itemPrice" || claim.field === "shippingFee" ? `$${Number(claim.value).toFixed(2)}` : `${claim.value}${unit}`;
+}
+function claimKey(claim: ClaimsResponse["claims"][number]) { return `${claim.field}|${claim.label ?? ""}|${String(claim.value).toLowerCase()}`; }
+
+/** Reads the seller's own listing text with AI. Shows facts with their quotes, labelled seller-stated, plus a live injection test. */
+function SellerClaims({ offer }: { offer: LiveOffer }) {
+  const text = offer.description ?? "";
+  const readable = text.trim().length >= 40;
+  const [base, setBase] = useState<ClaimsResponse | null>(null);
+  const [test, setTest] = useState<ClaimsResponse | null>(null);
+  const [busy, setBusy] = useState<null | "base" | "test">(null);
+
+  async function run(securityTest: boolean) {
+    setBusy(securityTest ? "test" : "base");
+    try {
+      const response = await fetch("/api/evidence/extract", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, securityTest }) });
+      const payload = await response.json() as ClaimsResponse;
+      if (securityTest) setTest(payload); else setBase(payload);
+    } catch {
+      const failed: ClaimsResponse = { available: false, reason: "We couldn't reach the AI reader.", claims: [], rejected: 0, findings: [], securityTest, injectedSentence: null };
+      if (securityTest) setTest(failed); else setBase(failed);
+    } finally { setBusy(null); }
+  }
+
+  useEffect(() => {
+    setBase(null); setTest(null);
+    if (readable) void run(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offer.snapshotId]);
+
+  if (!readable) return <p className="pp-tiny pp-muted" style={{ marginTop: 12 }}>This listing has no description text for the AI to read.</p>;
+  const baseKeys = new Set((base?.claims ?? []).map(claimKey));
+  const testKeys = new Set((test?.claims ?? []).map(claimKey));
+  const same = base !== null && test !== null && baseKeys.size === testKeys.size && [...baseKeys].every((key) => testKeys.has(key));
+
+  return (
+    <div className="pp-claims" style={{ marginTop: 16 }}>
+      <div className="pp-row pp-between">
+        <p style={{ fontWeight: 700 }}>What the seller&apos;s own listing says</p>
+        <span className="pp-badge pp-badge-neutral">Seller-stated · not verified</span>
+      </div>
+      {busy === "base" && <p className="pp-small pp-muted" style={{ marginTop: 8 }}><span className="pp-spinner pp-spinner-dark" aria-hidden="true" /> AI is reading the listing…</p>}
+      {base && !base.available && <p className="pp-small pp-muted" style={{ marginTop: 8 }}>{base.reason ?? "No facts were extracted."}</p>}
+      {base?.available && base.claims.length === 0 && <p className="pp-small pp-muted" style={{ marginTop: 8 }}>The listing doesn&apos;t state any extra facts clearly enough to quote.</p>}
+      {base?.available && base.claims.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          {base.claims.map((claim) => (
+            <div className="pp-claim" key={claimKey(claim)}>
+              <strong>{claim.field === "spec" ? claim.label : FIELD_LABEL[claim.field] ?? claim.field}</strong>
+              <span>{claimText(claim)}<br /><q>{claim.quote}</q></span>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="pp-tiny pp-muted" style={{ marginTop: 8 }}>Every fact must be quoted word for word from the listing or it is thrown away. These facts are shown for your information. They never replace verified catalog data or change a payment decision.</p>
+
+      {base?.available && (
+        <div style={{ marginTop: 12 }}>
+          <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => run(true)} disabled={busy !== null}>
+            {busy === "test" ? "Running the security test…" : "Run a live security test"}
+          </button>
+          <p className="pp-tiny pp-muted" style={{ marginTop: 6 }}>Adds a hostile instruction to this listing, as a malicious seller might, and shows what happens.</p>
+        </div>
+      )}
+      {test && (
+        <div className="pp-callout pp-callout-bad" style={{ marginTop: 12 }} role="status">
+          <p style={{ fontWeight: 700 }}>Security test: a hidden instruction was added</p>
+          {test.injectedSentence && <p className="pp-small" style={{ marginTop: 6 }}>“{test.injectedSentence}”</p>}
+          <p className="pp-small" style={{ marginTop: 8 }}>
+            PactPay&apos;s scanner flagged {test.findings.length} problem{test.findings.length === 1 ? "" : "s"}: {test.findings.map((item) => FINDING_LABEL[item.rule] ?? item.rule).join("; ") || "none"}.
+          </p>
+          {test.available ? (
+            <p className="pp-small" style={{ marginTop: 8 }}>
+              The AI reader saw the instruction too. It returned {test.claims.length} fact{test.claims.length === 1 ? "" : "s"} (before: {base?.claims.length ?? 0}). {test.rejected > 0 ? `${test.rejected} suspicious item${test.rejected === 1 ? " was" : "s were"} thrown away. ` : ""}
+              {same ? "The facts are identical to before, so the instruction changed nothing." : "Review the facts above: every one still has to be quoted from the listing and none may be an instruction."}
+            </p>
+          ) : <p className="pp-small" style={{ marginTop: 8 }}>{test.reason ?? "The AI reader didn't answer."} The scanner result above still stands.</p>}
+          <p className="pp-tiny" style={{ marginTop: 8 }}>The text is treated as data. It can never approve, hold or release a payment.</p>
+        </div>
+      )}
     </div>
   );
 }

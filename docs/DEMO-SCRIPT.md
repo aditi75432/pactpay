@@ -1,33 +1,29 @@
-# Demo video script (target 2:40, hard limit 3:00)
+# Demo video script (target 2:45, hard limit 3:00)
 
-Record at 1080p. Use the real UI, no slides. Add captions. No third-party logos or copyrighted music.
+Your first recording ran 7:00 and had no audio. Judges aren't required to watch past 3:00, and a silent video can't explain the idea. Record with a voiceover, stay on one browser tab, and cut everything that isn't below.
 
-**0:00 – 0:15 · The problem** (screen: home page)
-"AI agents can already check out for you. But what if the seller changes the deal after you say yes? Most systems won't notice. PactPay will."
+Setup: 1080p, browser zoom 125%, hide bookmarks, fresh profile, one released and one blocked order already in Activity. No third-party sites on screen (no retailer pages, no CAPTCHAs), no copyrighted music.
 
-**0:15 – 0:45 · Rules** (type the request, click Turn this into rules)
-"I tell it what I want in plain words. AI turns that into rules. I can edit them, and nothing happens until I approve. Once I do, they're locked on the server. The agent can't loosen them."
+**0:00 – 0:15 · Problem** (home page)
+"AI agents can shop for you. But more than half of shoppers won't let them, and when it goes wrong the platform gets blamed. The reason is simple: nothing checks the deal at the moment money moves."
 
-**0:45 – 1:15 · Shortlist** (agent progress, best match card)
-"The agent searches real stores, checks every offer against my rules, and re-confirms the best ones. I pick one."
+**0:15 – 0:40 · Rules and autonomy** (type request, rules, autonomy choice)
+"I describe what I want. AI turns it into rules I can edit. Then I choose how much my agent does alone. Ask me above fifty dollars. Rules and autonomy are locked on the server."
 
-**1:15 – 1:40 · Hold** (quote, PayPal approval, order screen)
-"PayPal puts the money on hold. Nothing is charged yet. This is PayPal Sandbox, so it's test money."
+**0:40 – 1:05 · The agent works** (shortlist, countdown)
+"The agent searches real stores, checks every offer, reads the seller's own listing with AI, and picks the best match. It's about to place a PayPal hold. I can cancel. I won't."
 
-**1:40 – 2:15 · The moment** (Demo control: Seller raises the price, then settle)
-"Now the seller raises the price after I approved. I'll say upfront this panel simulates that, because a sandbox can't pay a real store. PactPay re-checks the live offer and the live PayPal hold. Price is over my limit. Hold cancelled. I wasn't charged. And it tells me why, in plain English."
+**1:05 – 1:20 · PayPal** (PayPal screen)
+"PayPal says Pay, but this only places a hold. Nothing is charged."
 
-**2:15 – 2:30 · The happy path** (new order, Nothing changes, settle)
-"When nothing changed, the same check passes and the payment is released, exactly once."
+**1:20 – 2:05 · The moment** (order screen with countdown)
+"Now the agent will re-check the live offer and settle by itself. Watch. I'll make the seller raise the price. This panel simulates a seller, because a sandbox can't pay a real store. The re-check itself is real. Blocked. Hold cancelled. I wasn't charged. And the agent already skipped that offer and is finding the next one."
 
-**2:30 – 2:50 · Proof** (Receipt and proof, then Activity grid)
-"Every step is in a hash-chained audit trail I can verify against PayPal, and operators get a live grid of everything the agent did."
+**2:05 – 2:25 · Happy path and report** (next hold released, "What your agent did")
+"On the next offer nothing changed, so it released the payment. This report shows every step. I did two things. The agent did the rest."
 
-**2:50 – 3:00 · Close**
-"The AI can recommend. It can't release your money. That's PactPay."
+**2:25 – 2:40 · Security test** (live security test button)
+"Sellers can hide instructions in listings. Here is one. The scanner flags it and the AI's facts don't change."
 
-## Before you record
-
-- Run one successful and one blocked order first so the Activity grid has rows.
-- Use a fresh browser profile so the session scope shows only this demo.
-- Keep the Demo control sentence. It's the honest part, and judges will respect it.
+**2:40 – 2:50 · Close** (Activity grid)
+"Every decision is in this live grid. The agent can recommend. It can't release your money without passing the gate. That's PactPay."

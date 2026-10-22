@@ -7,6 +7,8 @@ import { explainSettlement, type Explanation, type OfferFacts } from "@pactpay/p
 import AppShell from "../../components/AppShell";
 import StepTracker from "../../components/StepTracker";
 import { money, shortId } from "../../components/format";
+import { decideSettlement, describeAutonomy, DEFAULT_AUTONOMY, type Autonomy } from "@pactpay/pact-core/autonomy";
+import { addExcluded, logEvent, readAutonomy, readLog } from "../../components/agentLog";
 
 type Tx = {
   transactionId: string; status: string; amount: string; currency: string;
@@ -43,6 +45,8 @@ const SCENARIOS = [
   { id: "CURRENCY_MISMATCH", title: "Currency changes", hint: "The offer switches to a different currency." },
 ] as const;
 
+const AUTO_SETTLE_SECONDS = 12;
+const AUTO_RETRY_SECONDS = 8;
 const WORKING = new Set(["CREATING", "ORDER_CREATED", "AUTHORIZING", "VERIFYING", "CAPTURE_ELIGIBLE", "CAPTURING", "VOIDING"]);
 const REVIEW = new Set(["AUTHORIZATION_REVIEW", "CAPTURE_REVIEW", "VOID_REVIEW", "FAILED"]);
 
@@ -109,6 +113,12 @@ export default function OrderPage() {
     return { tx, ctx, currency, baseline, current, title, merchant, outcome, explanation };
   }, [data]);
 
+  useEffect(() => {
+    if (!view) return;
+    if (view.outcome === "CAPTURED") logEvent("agent", `Re-checked the live offer and the PayPal hold: everything still matched. Released ${money(Number(view.tx.amount), view.currency)} (test money).`, `done:${view.tx.transactionId}`);
+    if (view.outcome === "VOIDED" && view.tx.status === "VOIDED") logEvent("agent", `Re-checked the live offer: ${view.explanation.changes[0] ? `${view.explanation.changes[0].label.toLowerCase()} went from ${view.explanation.changes[0].before} to ${view.explanation.changes[0].after}` : "it no longer met your rules"}. Cancelled the hold, so you were not charged.`, `done:${view.tx.transactionId}`);
+  }, [view]);
+
   const explanationKey = view && view.outcome !== "OPEN" ? `${view.tx.transactionId}:${view.tx.status}` : null;
   useEffect(() => {
     if (!view || !explanationKey || aiAskedFor.current === explanationKey) return;
@@ -122,6 +132,52 @@ export default function OrderPage() {
     }).catch(() => undefined);
   }, [view, explanationKey]);
 
+  const [autonomy, setAutonomy] = useState<Autonomy>(DEFAULT_AUTONOMY);
+  const [autoPaused, setAutoPaused] = useState(false);
+  const [settleCount, setSettleCount] = useState<number | null>(null);
+  const [agentRefusal, setAgentRefusal] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState<number | null>(null);
+  useEffect(() => { setAutonomy(readAutonomy().autonomy); }, []);
+
+  const heldNow = status === "AUTHORIZED";
+  const amountNow = Number(data?.transaction.amount ?? 0);
+  const agentDecision = decideSettlement(autonomy, amountNow, "agent");
+  const agentMayRelease = heldNow && agentDecision.allowed && !autoPaused && !agentRefusal;
+
+  useEffect(() => {
+    if (!data) return;
+    logEvent("you", `Approved the PayPal hold of ${money(Number(data.transaction.amount), data.transaction.currency || "USD")} (nothing charged).`, `paypal:${transactionId}`);
+  }, [data, transactionId]);
+
+  useEffect(() => {
+    if (!agentMayRelease) { setSettleCount(null); return; }
+    setSettleCount(AUTO_SETTLE_SECONDS);
+    logEvent("agent", `Autopilot armed: I will re-check the seller's live offer and settle in ${AUTO_SETTLE_SECONDS} seconds.`, `armed:${transactionId}`);
+  }, [agentMayRelease, transactionId]);
+
+  useEffect(() => {
+    if (settleCount === null) return;
+    if (settleCount <= 0) { void settle("agent"); return; }
+    const timer = window.setTimeout(() => setSettleCount((value) => (value === null ? null : value - 1)), 1000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settleCount]);
+
+  const snapshotIdNow = data?.transaction.offerSnapshotId ?? null;
+  useEffect(() => {
+    if (status !== "VOIDED") return;
+    addExcluded(snapshotIdNow);
+    if (autonomy.mode !== "ASK_ALWAYS" && !autoPaused) setRetryCount(AUTO_RETRY_SECONDS);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
+  useEffect(() => {
+    if (retryCount === null) return;
+    if (retryCount <= 0) { window.location.assign("/agent"); return; }
+    const timer = window.setTimeout(() => setRetryCount((value) => (value === null ? null : value - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [retryCount]);
+
   async function applyScenario(scenarioId: string) {
     if (busy) return;
     setBusy("scenario"); setMessage(null);
@@ -132,20 +188,29 @@ export default function OrderPage() {
       const payload = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "We couldn't apply that change.");
       await load();
+      logEvent("you", `Simulated a seller change: ${SCENARIOS.find((item) => item.id === scenarioId)?.title ?? scenarioId}.`);
       setMessage({ tone: "info", text: scenarioId === "BASELINE" ? "The seller's offer is unchanged." : "The seller's offer changed. Nothing has been charged. Now let PactPay check it." });
     } catch (caught) {
       setMessage({ tone: "bad", text: caught instanceof Error ? caught.message : "We couldn't apply that change." });
     } finally { setBusy(null); }
   }
 
-  async function settle() {
-    if (busy) return;
+  async function settle(trigger: "user" | "agent" = "user") {
+    if (busy) { if (trigger === "agent") setSettleCount(1); return; }
+    setSettleCount(null); setRetryCount(null);
     setBusy("settle"); setMessage(null);
+    if (trigger === "user") logEvent("you", "Pressed “Check the offer and settle”.", `manual:${transactionId}`);
     try {
-      const response = await fetch(`/api/paypal/transactions/${encodeURIComponent(transactionId)}/settle`, { method: "POST", cache: "no-store" });
-      const payload = await response.json().catch(() => ({})) as { error?: string };
+      const response = await fetch(`/api/paypal/transactions/${encodeURIComponent(transactionId)}/settle`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trigger }), cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({})) as { error?: string; requiresHuman?: boolean };
+      if (payload.requiresHuman) {
+        setAgentRefusal(payload.error ?? "Your autonomy setting needs you to release this payment.");
+      } else if (!response.ok && payload.error) {
+        setMessage({ tone: "bad", text: payload.error });
+      }
       await load();
-      if (!response.ok && payload.error) setMessage({ tone: "bad", text: payload.error });
     } catch (caught) {
       setMessage({ tone: "bad", text: caught instanceof Error ? caught.message : "The check couldn't finish. Nothing was charged. Check PayPal below before trying again." });
       await load();
@@ -276,6 +341,38 @@ export default function OrderPage() {
           )}
         </section>
 
+        {held && autonomy.mode !== "ASK_ALWAYS" && (
+          <section className="pp-agent-card pp-enter" aria-live="polite" aria-label="Autopilot">
+            <strong>Autopilot · {describeAutonomy(autonomy).title}</strong>
+            {settleCount !== null && busy === null && (
+              <>
+                <p style={{ marginTop: 8 }}>I&apos;ll re-check the seller&apos;s <em>live</em> offer and settle in <strong className="pp-num">{settleCount}s</strong>. If anything slipped, I cancel the hold. You can still simulate a seller change below before the timer ends.</p>
+                <div className="pp-agent-bar" aria-hidden="true"><i style={{ width: `${((AUTO_SETTLE_SECONDS - settleCount) / AUTO_SETTLE_SECONDS) * 100}%` }} /></div>
+                <div className="pp-row" style={{ marginTop: 14 }}>
+                  <button type="button" className="pp-btn pp-btn-primary pp-btn-sm" onClick={() => settle("agent")}>Check now</button>
+                  <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => { setAutoPaused(true); setSettleCount(null); }}>Pause autopilot</button>
+                </div>
+              </>
+            )}
+            {busy === "settle" && <p style={{ marginTop: 8 }}><span className="pp-spinner" aria-hidden="true" /> Re-checking the live offer and PayPal hold…</p>}
+            {busy === null && settleCount === null && autoPaused && <p style={{ marginTop: 8 }}>Autopilot is paused. Use the button below when you&apos;re ready.</p>}
+            {busy === null && settleCount === null && !autoPaused && !agentDecision.allowed && <p style={{ marginTop: 8 }}>{agentDecision.reason}</p>}
+            {busy === null && settleCount === null && agentRefusal && <p style={{ marginTop: 8 }}>{agentRefusal}</p>}
+          </section>
+        )}
+
+        {blocked && autonomy.mode !== "ASK_ALWAYS" && retryCount !== null && (
+          <section className="pp-agent-card pp-enter" aria-live="polite" aria-label="Autopilot retry">
+            <strong>Autopilot is finding the next best offer</strong>
+            <p style={{ marginTop: 8 }}>That offer failed the check, so I&apos;ve skipped it. I&apos;ll search again in <strong className="pp-num">{retryCount}s</strong> and hold your payment on the next one that clears your rules. You&apos;ll approve one new PayPal hold.</p>
+            <div className="pp-agent-bar" aria-hidden="true"><i style={{ width: `${((AUTO_RETRY_SECONDS - retryCount) / AUTO_RETRY_SECONDS) * 100}%` }} /></div>
+            <div className="pp-row" style={{ marginTop: 14 }}>
+              <button type="button" className="pp-btn pp-btn-primary pp-btn-sm" onClick={() => window.location.assign("/agent")}>Go now</button>
+              <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => setRetryCount(null)}>Stop</button>
+            </div>
+          </section>
+        )}
+
         {message && <p className={`pp-callout pp-callout-${message.tone === "bad" ? "bad" : message.tone === "good" ? "good" : "info"}`} role={message.tone === "bad" ? "alert" : "status"}>{message.text}</p>}
 
         {held && (
@@ -302,7 +399,7 @@ export default function OrderPage() {
                 </tbody>
               </table>
             )}
-            <button type="button" className="pp-btn pp-btn-primary pp-btn-block" style={{ marginTop: 18 }} onClick={settle} disabled={busy !== null}>
+            <button type="button" className="pp-btn pp-btn-primary pp-btn-block" style={{ marginTop: 18 }} onClick={() => settle("user")} disabled={busy !== null}>
               {busy === "settle" ? <><span className="pp-spinner" aria-hidden="true" /> Checking the seller&apos;s offer…</> : "Check the offer and settle"}
             </button>
             <p className="pp-tiny pp-muted" style={{ marginTop: 10, textAlign: "center" }}>If everything still matches, the payment is released. If not, the hold is cancelled.</p>
@@ -320,6 +417,30 @@ export default function OrderPage() {
             ))}
           </div>
         </section>
+
+        {finished && (() => {
+          const entries = readLog();
+          const youCount = entries.filter((entry) => entry.who === "you").length;
+          const agentCount = entries.filter((entry) => entry.who === "agent").length;
+          if (entries.length === 0) return null;
+          return (
+            <section className="pp-card" aria-labelledby="report-title">
+              <div className="pp-row pp-between" style={{ marginBottom: 6 }}>
+                <h2 className="pp-h3" id="report-title">What your agent did</h2>
+                <span className="pp-badge pp-badge-info">You: {youCount} · Agent: {agentCount}</span>
+              </div>
+              <p className="pp-small pp-muted" style={{ marginBottom: 10 }}>Everything from your request to the result. The agent handled the rest.</p>
+              <div className="pp-report">
+                {entries.map((entry, index) => (
+                  <div className="pp-report-row" key={`${entry.t}-${index}`}>
+                    <span className={`pp-badge ${entry.who === "agent" ? "pp-badge-good" : "pp-badge-neutral"}`} style={{ justifySelf: "start", height: "fit-content" }}>{entry.who === "agent" ? "Agent" : "You"}</span>
+                    <span>{entry.text}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          );
+        })()}
 
         <details className="pp-card-flat">
           <summary style={{ cursor: "pointer", fontWeight: 700 }}>Receipt and proof</summary>

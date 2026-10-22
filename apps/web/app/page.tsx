@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import type { Constraint, PurchasePact } from "@pactpay/pact-core";
 import AppShell from "./components/AppShell";
+import { describeAutonomy, parseAutonomy, type AutonomyMode } from "@pactpay/pact-core/autonomy";
+import { logEvent, resetRun, saveAutonomy } from "./components/agentLog";
 import StepTracker from "./components/StepTracker";
 
 type CompilerName = "GROQ" | "RULE_BASED_FALLBACK";
@@ -46,6 +48,8 @@ export default function Home() {
   const [itemCap, setItemCap] = useState("");
   const [totalCap, setTotalCap] = useState("");
   const [approving, setApproving] = useState(false);
+  const [autonomyMode, setAutonomyMode] = useState<AutonomyMode>("ASK_ABOVE");
+  const [autonomyLimit, setAutonomyLimit] = useState("50");
 
   const otherRules = useMemo(
     () => (compilation?.pact.constraints ?? []).filter((rule) => rule.field !== "currency" && !isPriceCap(rule)),
@@ -131,16 +135,25 @@ export default function Home() {
       constraints,
       authority: { canSearch: true, canCompare: true, canCreateOrder: false, canAuthorize: false, canCapture: false, canSubstitute: false, canChangeHardConstraints: false },
     };
+    const autonomy = parseAutonomy({ mode: autonomyMode, limitUsd: autonomyMode === "ASK_ABOVE" ? Number(autonomyLimit) : null });
+    if (autonomyMode === "ASK_ABOVE" && autonomy.mode !== "ASK_ABOVE") {
+      setError("Enter the most the agent may handle on its own, as a number above zero.");
+      return;
+    }
     setApproving(true);
     setError(null);
     try {
       const response = await fetch("/api/pacts/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pact: draftPact, userApproved: true, originalIntent: intent, compiler: compilation.compiler }),
+        body: JSON.stringify({ pact: draftPact, userApproved: true, originalIntent: intent, compiler: compilation.compiler, autonomy }),
       });
-      const payload = await response.json() as { approvalId?: string; pactHash?: string; pact?: PurchasePact; error?: string };
+      const payload = await response.json() as { approvalId?: string; pactHash?: string; pact?: PurchasePact; autonomy?: unknown; error?: string };
       if (!response.ok || !payload.approvalId || !payload.pact) throw new Error(payload.error ?? "We couldn't save your approval.");
+      resetRun();
+      const savedAutonomy = parseAutonomy(payload.autonomy);
+      saveAutonomy(savedAutonomy);
+      logEvent("you", `Approved ${payload.pact.constraints.filter((rule) => rule.severity === "hard").length} must-have rules and chose “${describeAutonomy(savedAutonomy).title}”.`);
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload.pact));
       sessionStorage.setItem(APPROVAL_KEY, JSON.stringify({ approvalId: payload.approvalId, pactId: payload.pact.id, pactHash: payload.pactHash }));
       sessionStorage.setItem(INTENT_KEY, JSON.stringify({ title: compilation.title, originalIntent: intent, searchQuery: compilation.searchQuery, compiler: compilation.compiler }));
@@ -248,11 +261,36 @@ export default function Home() {
                   </div>
                 )}
 
+                <fieldset className="pp-auto" style={{ marginTop: 22 }}>
+                  <legend className="pp-label" style={{ marginBottom: 4 }}>How much should your agent do on its own?</legend>
+                  <p className="pp-tiny pp-muted" style={{ marginBottom: 10 }}>Your rules stay locked in every mode. This only decides who clicks.</p>
+                  {(["ASK_ALWAYS", "ASK_ABOVE", "WITHIN_RULES"] as AutonomyMode[]).map((mode) => {
+                    const info = describeAutonomy(mode === "ASK_ABOVE" ? { mode, limitUsd: Number(autonomyLimit) > 0 ? Number(autonomyLimit) : 50 } : { mode, limitUsd: null });
+                    return (
+                      <label className="pp-auto-option" data-selected={autonomyMode === mode} key={mode}>
+                        <input type="radio" name="autonomy" checked={autonomyMode === mode} onChange={() => setAutonomyMode(mode)} />
+                        <span>
+                          <strong>{mode === "ASK_ABOVE" ? "Ask me above a limit" : info.title}{mode === "ASK_ABOVE" && <span className="pp-badge pp-badge-good" style={{ marginLeft: 8 }}>Recommended</span>}</strong>
+                          <span className="pp-small pp-muted" style={{ display: "block" }}>{info.detail}</span>
+                          {mode === "ASK_ABOVE" && autonomyMode === "ASK_ABOVE" && (
+                            <span className="pp-money-input" style={{ marginTop: 8, maxWidth: 190 }}>
+                              <span>$</span>
+                              <input aria-label="The most the agent may handle on its own, in dollars" inputMode="decimal" value={autonomyLimit} onChange={(event) => setAutonomyLimit(event.target.value)} />
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </fieldset>
+
                 {error && <p className="pp-callout pp-callout-bad" role="alert" style={{ marginTop: 14 }}>{error}</p>}
                 <button type="button" className="pp-btn pp-btn-primary pp-btn-block" style={{ marginTop: 18 }} onClick={approveAndFindOffers} disabled={approving}>
-                  {approving ? <><span className="pp-spinner" aria-hidden="true" /> Saving your approval…</> : "Approve these rules and find offers"}
+                  {approving ? <><span className="pp-spinner" aria-hidden="true" /> Saving your approval…</> : autonomyMode === "ASK_ALWAYS" ? "Approve these rules and find offers" : "Approve and let the agent start"}
                 </button>
-                <p className="pp-tiny pp-muted" style={{ marginTop: 10, textAlign: "center" }}>The agent can search and compare. It can never release your money or change these rules.</p>
+                <p className="pp-tiny pp-muted" style={{ marginTop: 10, textAlign: "center" }}>
+                  By approving you accept test mode: PayPal Sandbox money, fixed test shipping and tax, and no store order. The agent can never change these rules, and the same safety gate checks every payment in every mode.
+                </p>
               </div>
             )}
           </section>

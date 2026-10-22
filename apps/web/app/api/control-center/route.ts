@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listRecentPolicyRunDetails, listRecentTransactions } from "../../../../../lib/db";
 import { getSessionScope } from "../../../../../lib/pact-approvals";
+import { describeAutonomy } from "@pactpay/pact-core/autonomy";
 import { readSessionId } from "../../../lib/session";
 
 export const runtime = "nodejs";
@@ -27,8 +28,13 @@ export async function GET() {
       }, { headers: { "Cache-Control": "no-store" } });
     }
     const sessionId = await readSessionId();
-    const scope = sessionId ? await getSessionScope(sessionId) : { pactIds: new Set<string>(), pactHashes: new Set<string>() };
-    const scopedTransactions = transactions.filter((tx) => tx.pact_hash && scope.pactHashes.has(tx.pact_hash.trim().toLowerCase()));
+    const scope = sessionId ? await getSessionScope(sessionId) : { pactIds: new Set<string>(), pactHashes: new Set<string>(), autonomyByHash: new Map<string, import("@pactpay/pact-core/autonomy").Autonomy>() };
+    const scopedTransactions = transactions
+      .filter((tx) => tx.pact_hash && scope.pactHashes.has(tx.pact_hash.trim().toLowerCase()))
+      .map((tx) => {
+        const autonomy = scope.autonomyByHash.get((tx.pact_hash ?? "").trim().toLowerCase());
+        return { ...tx, autonomy_label: autonomy ? (autonomy.mode === "WITHIN_RULES" ? "Handles it within rules" : describeAutonomy(autonomy).title) : null };
+      });
     const scopedRuns = policyRuns.filter((run) => scope.pactIds.has(run.pact_id));
     return NextResponse.json({
       transactions: scopedTransactions,

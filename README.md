@@ -22,6 +22,26 @@ AI agents can already browse and check out. What they can't do reliably is notic
 
 The AI writes your rules and explains outcomes. It never makes the capture decision. A fixed, tested function does.
 
+## Autopilot: how much your agent does on its own
+
+When you approve your rules you also choose how much the agent may do without asking. The choice is stored on the server next to the rules and can't be changed by the agent.
+
+| Mode | What the agent does alone | What you do |
+|---|---|---|
+| **Ask me every time** | Searches, compares, prepares | Pick the offer, release the payment |
+| **Ask me above a limit** (recommended) | Under the limit: picks the best match, places the PayPal hold, re-checks the live offer, settles. Above it: waits | Approve the PayPal hold. Release anything above the limit |
+| **Handle it within my rules** | Everything above, at any amount | Approve the PayPal hold |
+
+Autopilot is visible and interruptible: a countdown before it places a hold and before it settles, with **Cancel** and **Pause** at every step. If the live re-check fails, the hold is cancelled and the agent skips that offer and moves on to the next best one. A "What your agent did" report lists every step and how many were yours.
+
+The server enforces the mode. An agent-triggered settlement is refused unless the autonomy chosen at approval allows that amount (HTTP 403). A human release always works. In every mode the same deterministic gate decides whether money moves. This prototype has no separate agent credentials, so the "agent" and "you" share one browser session. A production deployment would give the agent its own key.
+
+PayPal Sandbox still asks the buyer to approve each new hold. A saved payment method would remove that last tap. It isn't built here.
+
+### The seller-text reader (second use of AI)
+
+Seller listings are untrusted text. For the best match, an AI model reads the listing and returns the facts it states (return window, battery life, condition and so on), each with the exact words that support it. The server rejects any fact whose quote isn't literally in the text, any unknown field, any out-of-range number, and any fact that reads like an instruction. What survives is labelled **Seller-stated, not verified** and never changes a payment decision. A "live security test" button adds a hostile instruction to the real listing so you can watch the scanner flag it and the facts stay the same.
+
 ## Run it locally
 
 You need Node 20+, pnpm 10, and Docker (for Postgres).
@@ -59,7 +79,7 @@ Without a Groq key the app still works. It uses a basic rule parser and plain te
 |---|---|
 | Product search and refresh | **Live** Channel3 data |
 | PayPal orders, authorization, capture, void | **Live PayPal Sandbox** API calls, test money |
-| AI rule writing and explanations | **Live** Groq call (with labelled fallback) |
+| AI rule writing, outcome summaries and seller-text reading | **Live** Groq calls (with labelled fallbacks) |
 | Policy decision and settlement gate | **Real**, deterministic, unit tested |
 | Shipping and tax | **Simulated**: fixed $4.99 and 8%, labelled everywhere |
 | The seller changing the deal | **Simulated** by the "Demo control" panel, because a sandbox can't pay a real store and real stores won't change on cue |
@@ -83,7 +103,8 @@ Agent payment standards such as Google's AP2 (signed Intent and Cart mandates) a
 ```
 apps/web         Next.js app: shopper flow, order screen, Activity (AG Grid), API routes
 packages/pact-core   Pure TypeScript: policy engine, settlement state machine, audit chain,
-                     explanations, rate limiter, test fixtures (93 tests)
+                     explanations, autonomy policy, untrusted-text guard,
+                     rate limiter, test fixtures (112 tests)
 lib              Server modules: PostgreSQL, PayPal, Channel3, pact approvals, audit chain
 docs             Architecture, threat model, judge guide, demo script, changelog
 ```

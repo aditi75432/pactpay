@@ -37,6 +37,9 @@ import {
 import { hashCanonicalJson } from "../../../../../../../../lib/audit-chain";
 import { captureAuthorizedPayment, getAuthorization, getCapture, isPayPalSandboxConfigured, voidAuthorization } from "../../../../../../../../lib/paypal";
 import { enforceRateLimit } from "../../../../../../lib/request-guard";
+import { readSessionId } from "../../../../../../lib/session";
+import { getAutonomyForPactHash } from "../../../../../../../../lib/pact-approvals";
+import { decideSettlement } from "@pactpay/pact-core/autonomy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -362,6 +365,19 @@ export async function POST(_request: Request, routeContext: { params: Promise<{ 
     const baseline = asOffer(stored.baseline_offer);
     if (!pact || !offer || !baseline) {
       return NextResponse.json({ error: "Stored Purchase Pact or offer state is malformed. Settlement fails closed." }, { status: 409 });
+    }
+
+    // Who is asking? A human click always may release. An agent-triggered settlement is only allowed
+    // if the autonomy the shopper chose when approving the rules says so. Unknown means refuse.
+    const requestBody: unknown = await _request.json().catch(() => null);
+    const trigger: "user" | "agent" = typeof requestBody === "object" && requestBody !== null && (requestBody as Record<string, unknown>).trigger === "agent" ? "agent" : "user";
+    if (trigger === "agent") {
+      const sessionId = await readSessionId();
+      const autonomy = sessionId ? await getAutonomyForPactHash(sessionId, stored.pact_hash) : { mode: "ASK_ALWAYS" as const, limitUsd: null };
+      const decision = decideSettlement(autonomy, Number(tx.amount), "agent");
+      if (!decision.allowed) {
+        return NextResponse.json({ error: decision.reason, requiresHuman: true, trigger, autonomyMode: autonomy.mode }, { status: 403 });
+      }
     }
 
     let liveOfferRevalidation: RevalidationSummary | null = null;

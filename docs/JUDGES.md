@@ -12,6 +12,18 @@ PactPay is in **test mode**. Payments use PayPal Sandbox money. No real store or
 6. Try both: "Nothing changes" (payment released) and "Seller raises the price" on a new order (hold cancelled, you're not charged, with a plain-English reason).
 7. Open **Activity** in the top bar for the operator grid (AG Grid). It shows only your session's activity.
 
+## See the agent work on its own
+
+On the first screen keep **Ask me above a limit** selected (the default is $50). After you approve, you do very little:
+
+1. The agent searches, checks every offer and picks the best match. A 6-second countdown shows it is about to place the PayPal hold (you can cancel).
+2. Approve the hold on PayPal (the only tap PayPal Sandbox requires).
+3. On the order screen a 12-second countdown shows the agent will re-check the live offer and settle by itself. While it counts down, use **Demo control** to make the seller raise the price.
+4. The agent blocks it, cancels the hold, skips that offer and starts looking for the next one.
+5. **What your agent did** lists every step and how many were yours.
+
+To see the limit work, choose **Ask me every time** and notice the agent waits for you.
+
 ## Sandbox buyer account
 
 Put your sandbox buyer login in the hackathon's private testing instructions field. Don't commit credentials to this repo.
