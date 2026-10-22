@@ -319,12 +319,19 @@ export default function DiscoverPage() {
     setCheckoutStarting(true);
     setCheckoutError(null);
     try {
+      let approvalId: string | null = null;
+      try {
+        const raw = window.sessionStorage.getItem("pactpay.activeApproval.v1");
+        const parsed = raw ? JSON.parse(raw) as { approvalId?: unknown; pactId?: unknown } : null;
+        if (parsed && typeof parsed.approvalId === "string" && parsed.pactId === activePact.id) approvalId = parsed.approvalId;
+      } catch { /* handled below */ }
+      if (!approvalId) throw new Error("We can't find your saved approval. Go back to the home page and approve your rules again.");
       const response = await fetch("/api/paypal/offer-demo/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           snapshotId: checkoutOffer.snapshotId,
-          pact: activePact,
+          approvalId,
           approved: true,
           sandboxQuoteAcknowledged: true,
         }),
@@ -370,7 +377,7 @@ export default function DiscoverPage() {
         const ageMs = cache?.createdAt ? Date.now() - Date.parse(cache.createdAt) : 0;
         const cacheFresh = !cache?.createdAt || (Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 30 * 60 * 1000);
         if (cache && Array.isArray(cache.offers) && cache.offers.length > 0 && cache.offers.length <= 3 && cache.offerEvaluations && cache.query?.trim() === fromIntent && cache.selectedSnapshotId === selectedSnapshotId && selectedPresent && selectedEvaluationPresent && cacheFresh) {
-          setQuery(cache.query);
+          setQuery(cache.query ?? "");
           setOffers(cache.offers);
           setOfferEvaluations(cache.offerEvaluations);
           setSearchedAt(cache.searchedAt ?? null);

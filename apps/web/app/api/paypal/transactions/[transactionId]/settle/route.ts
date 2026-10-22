@@ -36,6 +36,7 @@ import {
 } from "../../../../../../../../lib/db";
 import { hashCanonicalJson } from "../../../../../../../../lib/audit-chain";
 import { captureAuthorizedPayment, getAuthorization, getCapture, isPayPalSandboxConfigured, voidAuthorization } from "../../../../../../../../lib/paypal";
+import { enforceRateLimit } from "../../../../../../lib/request-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -321,6 +322,8 @@ async function revalidateChannel3BoundOffer(args: {
 }
 
 export async function POST(_request: Request, routeContext: { params: Promise<{ transactionId: string }> }) {
+  const rateLimited = enforceRateLimit(_request, "settle", 20, 10 * 60_000);
+  if (rateLimited) return rateLimited;
   let claimedAction: "CAPTURE" | "VOID" | null = null;
   let transactionId: string | null = null;
   try {

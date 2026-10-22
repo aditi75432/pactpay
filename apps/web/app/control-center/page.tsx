@@ -47,6 +47,7 @@ type ControlCenterPayload = {
   transactions: TransactionRow[];
   policyRuns: PolicyRunRow[];
   generatedAt: string;
+  scope?: "session" | "all";
   paymentAction: "NONE";
   capturePerformedByPactPay: false;
 };
@@ -167,10 +168,16 @@ export default function ControlCenterPage() {
         </header>
 
         <section style={{ maxWidth: 860, marginBottom: 26 }}>
-          <p style={{ color: "#7fe2ab", fontSize: 12, fontWeight: 900, letterSpacing: 2, margin: "0 0 12px" }}>M0.14 · OPERATOR WORKSPACE · AG GRID COMMUNITY</p>
+          <p style={{ color: "#7fe2ab", fontSize: 12, fontWeight: 900, letterSpacing: 2, margin: "0 0 12px" }}>ACTIVITY · OPERATOR VIEW</p>
           <h1 style={{ fontSize: "clamp(36px, 5vw, 58px)", lineHeight: 1.02, letterSpacing: -2.3, margin: 0 }}>See what the agent did.<br /><span style={{ color: "#7fe2ab" }}>Know why money moved.</span></h1>
           <p style={{ color: "#a5b8b0", fontSize: 16, lineHeight: 1.7, maxWidth: 800, marginTop: 18 }}>Live persisted transaction states and policy-run records from PactPay's database. Sort and filter the grid, open any row, and inspect the pact, offer snapshot, verification trace and payment identifiers. This page is read-only: it does not settle or mutate transactions.</p>
         </section>
+
+        {data && data.scope !== "all" && (
+          <div style={{ marginBottom: 18, padding: "12px 14px", borderRadius: 12, background: "#10261f", border: "1px solid #2d5545", color: "#bfe9d3", fontSize: 14, lineHeight: 1.6 }}>
+            Showing activity from <strong>this browser session</strong> only. {data.transactions.length === 0 && data.policyRuns.length === 0 ? <>Nothing here yet. <a href="/" style={{ color: "#7fe2ab" }}>Run a purchase</a> and it will appear in this grid.</> : "Other visitors' payments are never shown."}
+          </div>
+        )}
 
         {error && <div role="alert" style={{ marginBottom: 18, padding: 14, borderRadius: 12, background: "#2a1517", border: "1px solid #8b4246", color: "#ffb8b8" }}>{error}</div>}
 

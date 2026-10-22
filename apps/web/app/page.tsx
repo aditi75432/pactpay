@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import type { Constraint, PurchasePact } from "@pactpay/pact-core";
+import AppShell from "./components/AppShell";
+import StepTracker from "./components/StepTracker";
 
 type CompilerName = "GROQ" | "RULE_BASED_FALLBACK";
 type Compilation = {
@@ -16,26 +18,23 @@ type Compilation = {
 };
 
 const STORAGE_KEY = "pactpay.activePact.v1";
+const INTENT_KEY = "pactpay.activeIntent.v1";
+const APPROVAL_KEY = "pactpay.activeApproval.v1";
 const DEMO_INTENT = "Find a wireless mouse with a catalog item price at most $50 USD, in stock. Prefer Logitech.";
 const EXAMPLES = [
   { label: "Wireless mouse", value: DEMO_INTENT },
   { label: "USB-C charger", value: "Find a USB-C charger with a catalog item price at most $40 USD, in stock. Prefer Anker." },
-  { label: "Wireless headphones", value: "Find wireless headphones with a catalog item price at most $100 USD, in stock. Prefer Sony." },
+  { label: "Headphones", value: "Find wireless headphones with a catalog item price at most $100 USD, in stock. Prefer Sony." },
 ];
 
-function money(value: number | undefined, currency: string) {
-  if (value === undefined || !Number.isFinite(value)) return "Not specified";
-  try { return new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: 2 }).format(value); }
-  catch { return `${value.toFixed(2)} ${currency}`; }
+function parseAmount(text: string): number | undefined | "invalid" {
+  if (!text.trim()) return undefined;
+  const parsed = Number(text.replace(/[ ,\s$₹]/g, ""));
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 1_000_000 ? parsed : "invalid";
 }
 
-function CountMark({ n }: { n: string }) { return <span className="count-mark">{n}</span>; }
-function Arrow() { return <span aria-hidden="true">↗</span>; }
-function Brand() {
-  return <a href="/" className="brand-lockup" aria-label="PactPay home">
-    <span className="brand-symbol"><span /><span /><span /><span /></span>
-    <span className="brand-word">pactpay<span className="brand-period">.</span></span>
-  </a>;
+function isPriceCap(rule: Constraint): boolean {
+  return (rule.field === "attributes.itemPrice" || rule.field === "total") && rule.comparator === "lte";
 }
 
 export default function Home() {
@@ -44,12 +43,14 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [compilation, setCompilation] = useState<Compilation | null>(null);
   const [currency, setCurrency] = useState("USD");
-  const [budgetText, setBudgetText] = useState("");
-  const [itemPriceBudgetText, setItemPriceBudgetText] = useState("");
-  const [searching, setSearching] = useState(false);
+  const [itemCap, setItemCap] = useState("");
+  const [totalCap, setTotalCap] = useState("");
+  const [approving, setApproving] = useState(false);
 
-  const hardCount = useMemo(() => compilation?.pact.constraints.filter((constraint) => constraint.severity === "hard").length ?? 0, [compilation]);
-  const softCount = useMemo(() => compilation?.pact.constraints.filter((constraint) => constraint.severity === "soft").length ?? 0, [compilation]);
+  const otherRules = useMemo(
+    () => (compilation?.pact.constraints ?? []).filter((rule) => rule.field !== "currency" && !isPriceCap(rule)),
+    [compilation],
+  );
 
   async function compileIntent() {
     setCompiling(true);
@@ -62,271 +63,211 @@ export default function Home() {
         body: JSON.stringify({ intent }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "Couldn't compile this intent.");
+      if (!response.ok) throw new Error(payload.error ?? "We couldn't turn that into rules. Try rephrasing it.");
       const result = payload as Compilation;
       setCompilation(result);
       setCurrency(result.pact.currency);
-      const landedTotalConstraint = result.pact.constraints.find((constraint) => constraint.field === "total" && constraint.comparator === "lte");
-      const draftLandedTotal = result.pact.maxTotalAmount ?? (typeof landedTotalConstraint?.expected === "number" ? landedTotalConstraint.expected : undefined);
-      setBudgetText(draftLandedTotal === undefined ? "" : String(draftLandedTotal));
-      const itemPriceConstraint = result.pact.constraints.find((constraint) => constraint.field === "attributes.itemPrice" && constraint.comparator === "lte");
-      setItemPriceBudgetText(typeof itemPriceConstraint?.expected === "number" ? String(itemPriceConstraint.expected) : "");
+      const itemRule = result.pact.constraints.find((rule) => rule.field === "attributes.itemPrice" && rule.comparator === "lte");
+      const totalRule = result.pact.constraints.find((rule) => rule.field === "total" && rule.comparator === "lte");
+      setItemCap(typeof itemRule?.expected === "number" ? String(itemRule.expected) : "");
+      // Only pre-fill a total limit when the shopper actually asked for one ("total", "including shipping", ...).
+      // A bare "at most $50" means the item price, and a catalog can't prove a landed total anyway.
+      const mentionedTotal = /\b(total|all[- ]?in|including|incl\.?|delivered|shipping|tax|out[- ]the[- ]door)\b/i.test(intent);
+      const draftTotal = result.pact.maxTotalAmount ?? (typeof totalRule?.expected === "number" ? totalRule.expected : undefined);
+      setTotalCap(mentionedTotal && draftTotal !== undefined ? String(draftTotal) : "");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Something went wrong. Please retry.");
+      setError(caught instanceof Error ? caught.message : "Something went wrong. Please try again.");
     } finally {
       setCompiling(false);
     }
   }
 
-  function updateConstraint(id: string, patch: Partial<Constraint>) {
+  function updateRule(id: string, patch: Partial<Constraint>) {
     setCompilation((current) => current ? {
       ...current,
-      pact: { ...current.pact, constraints: current.pact.constraints.map((constraint) => constraint.id === id ? { ...constraint, ...patch } : constraint) },
+      pact: { ...current.pact, constraints: current.pact.constraints.map((rule) => rule.id === id ? { ...rule, ...patch } : rule) },
     } : current);
   }
 
-  function changeItemPriceBudget(value: string) {
-    setItemPriceBudgetText(value);
-    const parsed = value.trim() ? Number(value.replace(/[ ,\s$₹]/g, "")) : undefined;
-    if (value.trim() && (parsed === undefined || !Number.isFinite(parsed) || parsed <= 0 || parsed > 1_000_000)) return;
-    setCompilation((current) => {
-      if (!current) return current;
-      const constraints = current.pact.constraints.filter((constraint) => !(constraint.field === "attributes.itemPrice" && constraint.comparator === "lte"));
-      if (parsed !== undefined) constraints.unshift({
-        id: "max-catalog-item-price",
-        kind: "budget",
-        severity: "hard",
-        description: `Catalog item price must be at most ${parsed.toFixed(2)} ${currency}; shipping and tax are not included.`,
-        expected: parsed,
-        comparator: "lte",
-        field: "attributes.itemPrice",
-      });
-      return { ...current, pact: { ...current.pact, constraints } };
-    });
-  }
-
-  function changeLandedBudget(value: string) {
-    setBudgetText(value);
-    const parsed = value.trim() ? Number(value.replace(/[ ,\s$₹]/g, "")) : undefined;
-    if (value.trim() && (parsed === undefined || !Number.isFinite(parsed) || parsed <= 0 || parsed > 1_000_000)) return;
-    setCompilation((current) => {
-      if (!current) return current;
-      const constraints = current.pact.constraints.filter((constraint) => constraint.field !== "total");
-      if (parsed !== undefined) constraints.unshift({
-        id: "max-landed-total",
-        kind: "budget",
-        severity: "hard",
-        description: `Final landed total must be at most ${parsed.toFixed(2)} ${currency}.`,
-        expected: parsed,
-        comparator: "lte",
-        field: "total",
-      });
-      return { ...current, pact: { ...current.pact, maxTotalAmount: parsed, constraints } };
-    });
-  }
-
-  function removeConstraint(id: string) {
-    const removed = compilation?.pact.constraints.find((constraint) => constraint.id === id);
-    if (removed?.field === "attributes.itemPrice" && removed.comparator === "lte") setItemPriceBudgetText("");
+  function removeRule(id: string) {
     setCompilation((current) => current ? {
       ...current,
-      pact: { ...current.pact, constraints: current.pact.constraints.filter((constraint) => constraint.id !== id) },
+      pact: { ...current.pact, constraints: current.pact.constraints.filter((rule) => rule.id !== id) },
     } : current);
   }
 
-  function approveAndSearch() {
-    if (!compilation) return;
-    const parsedBudget = budgetText.trim() ? Number(budgetText.replace(/[ ,\s$₹]/g, "")) : undefined;
-    const parsedItemPriceBudget = itemPriceBudgetText.trim() ? Number(itemPriceBudgetText.replace(/[ ,\s$₹]/g, "")) : undefined;
-    if (parsedBudget !== undefined && (!Number.isFinite(parsedBudget) || parsedBudget <= 0 || parsedBudget > 1_000_000)) {
-      setError("Maximum landed total must be greater than zero and no more than 1,000,000, or be left blank.");
+  async function approveAndFindOffers() {
+    if (!compilation || approving) return;
+    const item = parseAmount(itemCap);
+    const total = parseAmount(totalCap);
+    if (item === "invalid" || total === "invalid") {
+      setError("Enter amounts greater than zero, or leave a limit blank.");
       return;
     }
-    if (parsedItemPriceBudget !== undefined && (!Number.isFinite(parsedItemPriceBudget) || parsedItemPriceBudget <= 0 || parsedItemPriceBudget > 1_000_000)) {
-      setError("Catalog item price cap must be greater than zero and no more than 1,000,000, or be left blank.");
-      return;
+    // Each money limit is rebuilt from its own field so an item-price limit can never silently become a total.
+    const constraints: Constraint[] = compilation.pact.constraints.filter((rule) => rule.field !== "currency" && !isPriceCap(rule));
+    if (total !== undefined) {
+      constraints.unshift({ id: "max-landed-total", kind: "budget", severity: "hard", description: `Final total must be at most ${total.toFixed(2)} ${currency}.`, expected: total, comparator: "lte", field: "total" });
     }
-    // Rebuild the two caps from their own controls. A catalog item-price cap
-    // must never silently become a final landed-total assertion.
-    let constraints = compilation.pact.constraints.filter((constraint) =>
-      constraint.field !== "currency" &&
-      constraint.field !== "total" &&
-      !(constraint.field === "attributes.itemPrice" && constraint.comparator === "lte")
-    );
-    if (parsedBudget !== undefined) {
-      constraints.unshift({
-        id: "max-landed-total",
-        kind: "budget",
-        severity: "hard",
-        description: `Final landed total must be at most ${parsedBudget.toFixed(2)} ${currency}.`,
-        expected: parsedBudget,
-        comparator: "lte",
-        field: "total",
-      });
+    if (item !== undefined) {
+      constraints.unshift({ id: "max-catalog-item-price", kind: "budget", severity: "hard", description: `Item price must be at most ${item.toFixed(2)} ${currency}; shipping and tax are not included.`, expected: item, comparator: "lte", field: "attributes.itemPrice" });
     }
-    if (parsedItemPriceBudget !== undefined) {
-      constraints.unshift({
-        id: "max-catalog-item-price",
-        kind: "budget",
-        severity: "hard",
-        description: `Catalog item price must be at most ${parsedItemPriceBudget.toFixed(2)} ${currency}; shipping and tax are not included.`,
-        expected: parsedItemPriceBudget,
-        comparator: "lte",
-        field: "attributes.itemPrice",
-      });
-    }
-    constraints.push({
-      id: "currency-match",
-      kind: "attribute",
-      severity: "hard",
-      description: `Offer currency must be ${currency}.`,
-      expected: currency,
-      comparator: "eq",
-      field: "currency",
-    });
-    if (constraints.length < 2) {
-      setError("Keep at least one purchase requirement in addition to the currency check.");
+    constraints.push({ id: "currency-match", kind: "attribute", severity: "hard", description: `Offer currency must be ${currency}.`, expected: currency, comparator: "eq", field: "currency" });
+    if (constraints.filter((rule) => rule.severity === "hard" && rule.field !== "currency").length < 1) {
+      setError("Keep at least one must-have rule besides the currency, otherwise nothing could ever be approved.");
       return;
     }
     if (constraints.length > 12) {
-      setError("This pact has too many requirements. Remove a rule before continuing.");
+      setError("That's too many rules. Remove a few to continue.");
       return;
     }
-    const approvedPact: PurchasePact = {
-      ...compilation.pact,
+    // Drop the compiler's own total so a limit the shopper cleared can't sneak back into the approved rules.
+    const { maxTotalAmount: _compilerTotal, ...pactWithoutTotal } = compilation.pact;
+    void _compilerTotal;
+    const draftPact: PurchasePact = {
+      ...pactWithoutTotal,
       currency: currency as PurchasePact["currency"],
-      maxTotalAmount: parsedBudget,
+      ...(total !== undefined ? { maxTotalAmount: total } : {}),
       constraints,
-      authority: {
-        canSearch: true,
-        canCompare: true,
-        canCreateOrder: false,
-        canAuthorize: false,
-        canCapture: false,
-        canSubstitute: false,
-        canChangeHardConstraints: false,
-      },
+      authority: { canSearch: true, canCompare: true, canCreateOrder: false, canAuthorize: false, canCapture: false, canSubstitute: false, canChangeHardConstraints: false },
     };
-    setSearching(true);
+    setApproving(true);
     setError(null);
     try {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(approvedPact));
-      sessionStorage.setItem("pactpay.activeIntent.v1", JSON.stringify({ title: compilation.title, originalIntent: intent, searchQuery: compilation.searchQuery, compiler: compilation.compiler }));
+      const response = await fetch("/api/pacts/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pact: draftPact, userApproved: true, originalIntent: intent, compiler: compilation.compiler }),
+      });
+      const payload = await response.json() as { approvalId?: string; pactHash?: string; pact?: PurchasePact; error?: string };
+      if (!response.ok || !payload.approvalId || !payload.pact) throw new Error(payload.error ?? "We couldn't save your approval.");
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload.pact));
+      sessionStorage.setItem(APPROVAL_KEY, JSON.stringify({ approvalId: payload.approvalId, pactId: payload.pact.id, pactHash: payload.pactHash }));
+      sessionStorage.setItem(INTENT_KEY, JSON.stringify({ title: compilation.title, originalIntent: intent, searchQuery: compilation.searchQuery, compiler: compilation.compiler }));
       window.location.href = `/agent?query=${encodeURIComponent(compilation.searchQuery)}`;
-    } catch {
-      setSearching(false);
-      setError("Your browser couldn't save this pact for the next step. Check that site storage is enabled and retry.");
+    } catch (caught) {
+      setApproving(false);
+      setError(caught instanceof Error ? caught.message : "We couldn't save your approval. Please try again.");
     }
   }
 
   return (
-    <main className="home-shell">
-      <div className="ambient ambient-one" />
-      <div className="ambient ambient-two" />
-      <header className="topbar">
-        <Brand />
-        <nav className="top-nav" aria-label="Main navigation">
-          <a className="nav-active" href="/">Workspace</a>
-          <a href="/agent">Shopping agent</a>
-          <a href="/discover">Discover offers</a>
-          <a href="/control-center">Control Center</a>
-          <a href="/evidence">Evidence desk</a>
-          <a href="/pact-lab">Policy lab</a>
-        </nav>
-        <div className="topbar-right">
-          <span className="env-pill"><span className="live-dot" /> SANDBOX · NO LIVE PAYMENTS</span>
-          <a href="/protected-demo" className="nav-sandbox">Sandbox lab <Arrow /></a>
-        </div>
-      </header>
+    <AppShell>
+      <section className="pp-hero">
+        <p className="pp-eyebrow">Safer shopping with AI agents</p>
+        <h1 className="pp-h1" style={{ marginTop: 14, maxWidth: 14 + "em" }}>Let your AI agent shop. Keep the final say.</h1>
+        <p className="pp-lede" style={{ marginTop: 18 }}>
+          Tell PactPay what you want. It finds real offers and puts your payment on hold. The money is released only if the offer still matches the rules you approved. If the seller changes the deal, the hold is cancelled and you aren&apos;t charged.
+        </p>
+      </section>
 
-      <section className="hero-grid">
-        <div className="hero-copy">
-          <div className="eyebrow"><span className="eyebrow-line" /> THE CONTROL LAYER FOR AGENTIC COMMERCE</div>
-          <h1>Let AI shop.<br /><span>Never let it guess.</span></h1>
-          <p className="hero-lede">Shopping agents can find the deal. PactPay makes sure the deal still obeys <em>your</em> rules before money moves.</p>
-          <div className="hero-proof-row">
-            <div className="proof-chip"><span className="proof-icon proof-mint">✳</span><span><strong>Intent-bound</strong><small>Your rules become a Purchase Pact</small></span></div>
-            <div className="proof-chip"><span className="proof-icon proof-lilac">⌁</span><span><strong>Evidence-gated</strong><small>Unknown never means “pass”</small></span></div>
-            <div className="proof-chip"><span className="proof-icon proof-gold">↗</span><span><strong>Payment-aware</strong><small>Deterministic gate before capture</small></span></div>
-          </div>
-          <div className="trust-note"><span className="trust-check">✓</span> AI drafts the rules. The policy engine enforces them. The model cannot capture funds.</div>
-        </div>
-
-        <section className="composer-card" aria-labelledby="composer-title">
-          <div className="composer-heading">
-            <div>
-              <div className="step-kicker"><CountMark n="01" /> CREATE YOUR PURCHASE PACT</div>
-              <h2 id="composer-title">What are we buying?</h2>
-              <p>Say what matters. We’ll turn it into rules you can review and approve.</p>
+      <div style={{ marginTop: 36 }}>
+        <StepTracker current={compilation ? 1 : 0} />
+        <div className="pp-grid-2">
+          <section className="pp-card" aria-labelledby="ask-title">
+            <div className="pp-card-head">
+              <div>
+                <h2 className="pp-h3" id="ask-title">What do you want to buy?</h2>
+                <p className="pp-small pp-muted" style={{ marginTop: 4 }}>Say it the way you would to a friend. Include a budget if you have one.</p>
+              </div>
             </div>
-            <div className="ai-orbit" aria-hidden="true"><span>✳</span><i /><i /><i /></div>
-          </div>
-          <label className="sr-only" htmlFor="purchase-intent">Describe your purchase intent</label>
-          <textarea id="purchase-intent" className="intent-input" value={intent} onChange={(event) => setIntent(event.currentTarget.value)} maxLength={1200} placeholder="e.g. Find a wireless mouse with a catalog item price at most $50 USD, in stock. Prefer Logitech." />
-          <div className="intent-footer"><span>{intent.length}/1,200 characters</span><span><span className="input-dot" /> Natural language in · Structured rules out</span></div>
-          <div className="example-row" aria-label="Example intents">
-            <span className="example-label">Try an example</span>
-            {EXAMPLES.map((example) => <button type="button" key={example.label} className="example-chip" onClick={() => { setIntent(example.value); setError(null); }}>{example.label}</button>)}
-          </div>
-          <button type="button" className="primary-button compile-button" disabled={compiling || intent.trim().length < 8} onClick={() => void compileIntent()}>
-            {compiling ? <><span className="button-spinner" /> Compiling your intent…</> : <>Compile purchase pact <span aria-hidden="true">→</span></>}
-          </button>
-          {error && <p className="feedback feedback-error" role="alert">{error}</p>}
-          {compilation && <div className="compile-result" aria-live="polite">
-            <div className="result-topline">
-              <span className={`compiler-badge ${compilation.compiler === "GROQ" ? "compiler-ai" : "compiler-fallback"}`}>
-                <span className="badge-dot" /> {compilation.compiler === "GROQ" ? `GROQ AI · ${compilation.model}` : "LOCAL RULE-BASED DRAFT"}
-              </span>
-              <span className="result-version">DRAFT v1</span>
+            <label className="pp-sr" htmlFor="intent">Describe your purchase</label>
+            <textarea id="intent" className="pp-textarea" value={intent} onChange={(event) => setIntent(event.target.value)} maxLength={1200} />
+            <div className="pp-row" style={{ margin: "14px 0 18px" }}>
+              <span className="pp-tiny pp-muted" style={{ fontWeight: 700 }}>Try:</span>
+              {EXAMPLES.map((example) => (
+                <button key={example.label} type="button" className="pp-chip" onClick={() => { setIntent(example.value); setCompilation(null); setError(null); }}>{example.label}</button>
+              ))}
             </div>
-            {compilation.notice && <p className="fallback-note">{compilation.notice}</p>}
-            <div className="result-title-row"><div><span className="field-label">YOUR PURCHASE PACT</span><h3>{compilation.title}</h3></div><span className="pact-shield">✓</span></div>
-            <div className="pact-summary-stats">
-              <div><strong>{hardCount.toString().padStart(2, "0")}</strong><span>Hard rules</span></div>
-              <div><strong>{softCount.toString().padStart(2, "0")}</strong><span>Preferences</span></div>
-              <div><strong>{compilation.pact.constraints.length.toString().padStart(2, "0")}</strong><span>Total rules</span></div>
-            </div>
-            <div className="pact-controls">
-              <label className="control-field"><span>Payment currency</span><select value={currency} onChange={(event) => setCurrency(event.currentTarget.value)}><option value="USD">USD · US dollar</option><option value="INR">INR · Indian rupee</option></select></label>
-              <label className="control-field"><span>Catalog item price cap <i>for discovery</i></span><div className="budget-input-wrap"><span>{currency === "INR" ? "₹" : "$"}</span><input inputMode="decimal" value={itemPriceBudgetText} onChange={(event) => changeItemPriceBudget(event.currentTarget.value)} placeholder="No cap set" /></div><small>Listing price only; excludes shipping and tax.</small></label>
-              <label className="control-field"><span>Final landed total <i>if specified</i></span><div className="budget-input-wrap"><span>{currency === "INR" ? "₹" : "$"}</span><input inputMode="decimal" value={budgetText} onChange={(event) => changeLandedBudget(event.currentTarget.value)} placeholder="No cap set" /></div><small>Requires separate checkout evidence to verify.</small></label>
-            </div>
-            <div className="constraints-heading"><span>REVIEW RULES</span><span>YOU ARE IN CONTROL</span></div>
-            <div className="constraint-list">
-              {compilation.pact.constraints.map((constraint) => <div className="constraint-row" key={constraint.id}>
-                <span className={`rule-severity ${constraint.severity === "hard" ? "rule-hard" : "rule-soft"}`}>{constraint.severity === "hard" ? "HARD" : "SOFT"}</span>
-                <span className="rule-copy"><strong>{constraint.description}</strong><small>{constraint.field}</small></span>
-                {constraint.field !== "currency" && constraint.field !== "total" && !(constraint.field === "attributes.itemPrice" && constraint.comparator === "lte") && <button type="button" className="severity-toggle" onClick={() => updateConstraint(constraint.id, { severity: constraint.severity === "hard" ? "soft" : "hard" })} title="Toggle between a hard requirement and a preference">{constraint.severity === "hard" ? "Make soft" : "Make hard"}</button>}
-                {constraint.field !== "currency" && constraint.field !== "total" && <button type="button" className="remove-rule" onClick={() => removeConstraint(constraint.id)} aria-label={`Remove rule ${constraint.description}`} title="Remove rule">×</button>}
-              </div>)}
-            </div>
-            {compilation.assumptions.length > 0 && <div className="assumptions-box"><div className="assumptions-title"><span>ⓘ</span> CONFIRM THESE ASSUMPTIONS</div>{compilation.assumptions.map((assumption, index) => <p key={`${index}-${assumption}`}>{assumption}</p>)}</div>}
-            <div className="evidence-gap-note"><span className="gap-icon">◇</span><div><strong>Requirements are not evidence.</strong><p>{compilation.unverifiedRequirements[0] ?? "Merchant data may leave total, shipping, delivery or return terms unknown."} Missing or stale evidence cannot pass a hard rule.</p></div></div>
-            <button type="button" className="primary-button approve-button" onClick={approveAndSearch} disabled={searching || compilation.pact.constraints.filter((constraint) => constraint.field !== "currency").length === 0}>
-              {searching ? <><span className="button-spinner" /> Opening shopping agent…</> : <>Approve pact & run shopping agent <span aria-hidden="true">→</span></>}
+            <button type="button" className="pp-btn pp-btn-primary pp-btn-block" onClick={compileIntent} disabled={compiling || intent.trim().length < 8}>
+              {compiling ? <><span className="pp-spinner" aria-hidden="true" /> Writing your rules…</> : "Turn this into rules"}
             </button>
-            <p className="approval-footnote"><span>▣</span> Approval locks this draft for evaluation in this browser session. Capture authority remains disabled.</p>
-          </div>}
-        </section>
-      </section>
+            {error && !compilation && <p className="pp-callout pp-callout-bad" role="alert" style={{ marginTop: 14 }}>{error}</p>}
+          </section>
 
-      <section className="workflow-section">
-        <div className="section-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> FROM INTENT TO VERIFIED ACTION</div><h2>One promise. <span>Three guardrails.</span></h2></div><p>Agents can move quickly. The payment boundary must move deliberately.</p></div>
-        <div className="workflow-grid">
-          <article className="workflow-card"><div className="workflow-top"><CountMark n="01" /><span className="workflow-icon icon-green">✳</span></div><h3>Understand intent</h3><p>AI extracts explicit requirements into a reviewable Purchase Pact. Unstated details are surfaced—not invented.</p><div className="workflow-foot"><span className="status-bar status-green" /> Human-approved rules</div></article>
-          <article className="workflow-card"><div className="workflow-top"><CountMark n="02" /><span className="workflow-icon icon-purple">⌁</span></div><h3>Verify the offer</h3><p>Live catalog snapshots are compared with the Pact. Source, freshness and missing evidence remain visible.</p><div className="workflow-foot"><span className="status-bar status-purple" /> Provenance before confidence</div></article>
-          <article className="workflow-card"><div className="workflow-top"><CountMark n="03" /><span className="workflow-icon icon-amber">⛨</span></div><h3>Gate the payment</h3><p>Only a deterministic server-side decision may proceed. Failed or uncertain conditions stop and reconcile safely.</p><div className="workflow-foot"><span className="status-bar status-amber" /> Fail-closed by design</div></article>
+          <section aria-live="polite">
+            {!compilation && (
+              <div className="pp-card-flat" style={{ background: "transparent", borderStyle: "dashed" }}>
+                <h2 className="pp-h3">Your rules will show up here</h2>
+                <p className="pp-muted" style={{ marginTop: 8 }}>Nothing is searched or paid until you read them and approve. You can change any rule first.</p>
+              </div>
+            )}
+            {compilation && (
+              <div className="pp-card pp-enter">
+                <div className="pp-card-head">
+                  <div>
+                    <h2 className="pp-h3">{compilation.title}</h2>
+                    <p className="pp-small pp-muted" style={{ marginTop: 4 }}>Check these rules. They&apos;re the only thing the agent can act on.</p>
+                  </div>
+                  <span className={`pp-badge ${compilation.compiler === "GROQ" ? "pp-badge-good" : "pp-badge-warn"}`}>
+                    {compilation.compiler === "GROQ" ? "Written by AI" : "Basic parser"}
+                  </span>
+                </div>
+                {compilation.notice && <p className="pp-callout pp-callout-warn pp-small" style={{ marginBottom: 14 }}>{compilation.notice}</p>}
+
+                <div className="pp-stack" style={{ gap: 14 }}>
+                  <div>
+                    <label className="pp-label" htmlFor="item-cap">Most you&apos;ll pay for the item</label>
+                    <div className="pp-money-input"><span>{currency === "INR" ? "₹" : "$"}</span><input id="item-cap" inputMode="decimal" value={itemCap} onChange={(event) => setItemCap(event.target.value)} placeholder="No limit" /></div>
+                    <p className="pp-tiny pp-muted" style={{ marginTop: 6 }}>Shipping and tax aren&apos;t counted here.</p>
+                  </div>
+                  <div>
+                    <label className="pp-label" htmlFor="total-cap">Most you&apos;ll pay in total, with shipping and tax <span className="pp-muted" style={{ fontWeight: 500 }}>(optional)</span></label>
+                    <div className="pp-money-input"><span>{currency === "INR" ? "₹" : "$"}</span><input id="total-cap" inputMode="decimal" value={totalCap} onChange={(event) => setTotalCap(event.target.value)} placeholder="No limit" /></div>
+                    <p className="pp-tiny pp-muted" style={{ marginTop: 6 }}>In test mode, shipping and tax are fixed test values ($4.99 and 8%). PactPay checks this limit again right before releasing payment.</p>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 18 }}>
+                  {otherRules.map((rule) => (
+                    <div className="pp-rule" key={rule.id}>
+                      <span className={`pp-badge ${rule.severity === "hard" ? "pp-badge-info" : "pp-badge-neutral"}`}>{rule.severity === "hard" ? "Must" : "Nice"}</span>
+                      <div>
+                        <p className="pp-rule-text">{rule.description}</p>
+                      </div>
+                      <div className="pp-row" style={{ gap: 4 }}>
+                        <div className="pp-seg" role="group" aria-label={`Importance of: ${rule.description}`}>
+                          <button type="button" aria-pressed={rule.severity === "hard"} onClick={() => updateRule(rule.id, { severity: "hard" })}>Must</button>
+                          <button type="button" aria-pressed={rule.severity === "soft"} onClick={() => updateRule(rule.id, { severity: "soft" })}>Nice to have</button>
+                        </div>
+                        <button type="button" className="pp-x" onClick={() => removeRule(rule.id)} aria-label={`Remove rule: ${rule.description}`}>×</button>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="pp-rule">
+                    <span className="pp-badge pp-badge-info">Must</span>
+                    <p className="pp-rule-text">Priced in {currency}</p>
+                    <span />
+                  </div>
+                </div>
+
+                {(compilation.assumptions.length > 0 || compilation.unverifiedRequirements.length > 0) && (
+                  <div className="pp-callout pp-callout-info pp-small" style={{ marginTop: 14 }}>
+                    {compilation.assumptions.map((item) => <p key={item}>{item}</p>)}
+                    {compilation.unverifiedRequirements.length > 0 && <p style={{ marginTop: 6 }}>Not checkable yet from catalog data: {compilation.unverifiedRequirements.join("; ")}.</p>}
+                  </div>
+                )}
+
+                {error && <p className="pp-callout pp-callout-bad" role="alert" style={{ marginTop: 14 }}>{error}</p>}
+                <button type="button" className="pp-btn pp-btn-primary pp-btn-block" style={{ marginTop: 18 }} onClick={approveAndFindOffers} disabled={approving}>
+                  {approving ? <><span className="pp-spinner" aria-hidden="true" /> Saving your approval…</> : "Approve these rules and find offers"}
+                </button>
+                <p className="pp-tiny pp-muted" style={{ marginTop: 10, textAlign: "center" }}>The agent can search and compare. It can never release your money or change these rules.</p>
+              </div>
+            )}
+          </section>
         </div>
+      </div>
+
+      <section className="pp-how" aria-label="How PactPay works">
+        <div className="pp-how-item"><div className="pp-how-n">1</div><h3 className="pp-h3">You set the rules</h3><p className="pp-muted pp-small" style={{ marginTop: 6 }}>Budget, must-haves and preferences, in plain words. You approve them, and they&apos;re locked on our server.</p></div>
+        <div className="pp-how-item"><div className="pp-how-n">2</div><h3 className="pp-h3">Your payment is held</h3><p className="pp-muted pp-small" style={{ marginTop: 6 }}>The agent finds a real offer. PayPal holds the amount. Nothing has been charged yet.</p></div>
+        <div className="pp-how-item"><div className="pp-how-n">3</div><h3 className="pp-h3">Released only if it still matches</h3><p className="pp-muted pp-small" style={{ marginTop: 6 }}>Right before release, PactPay re-checks the seller&apos;s current offer. If anything slipped, the hold is cancelled.</p></div>
       </section>
 
-      <section className="capability-strip">
-        <div><span className="capability-icon">▦</span><span><strong>Source-backed evidence desk</strong><small>Review evidence, merchant claims and policy results side by side.</small></span><a href="/evidence" aria-label="Open evidence desk"><Arrow /></a></div>
-        <div><span className="capability-icon">⌘</span><span><strong>Repeatable red-team scenarios</strong><small>Test the gate with downgrades and stale evidence.</small></span><a href="/pact-lab" aria-label="Open policy lab"><Arrow /></a></div>
-        <div><span className="capability-icon">↗</span><span><strong>PayPal Sandbox execution</strong><small>Controlled simulator—not a real retailer checkout.</small></span><a href="/protected-demo" aria-label="Open sandbox simulator"><Arrow /></a></div>
-        <div><span className="capability-icon">▦</span><span><strong>AG Grid Control Center</strong><small>Inspect real persisted policy runs and payment states.</small></span><a href="/control-center" aria-label="Open AG Grid Control Center"><Arrow /></a></div>
-      </section>
-
-      <footer className="home-footer"><Brand /><p>THE PACT IS THE RULE. EVIDENCE IS THE PROOF.</p><span>PayPal Sandbox only · No live payments · Merchant checkout not integrated</span></footer>
-    </main>
+      <p className="pp-footnote">
+        PactPay runs in test mode. Offers come from a live product catalog (Channel3). Payments use PayPal Sandbox test money, and shipping and tax are fixed test values, so no store order is placed and no real money moves.
+      </p>
+    </AppShell>
   );
 }

@@ -4,6 +4,7 @@ import type { Evidence, PurchasePact } from "@pactpay/pact-core";
 import { evaluatePact, summarizeVerification, type OfferSnapshot } from "@pactpay/pact-core/policy";
 import { getChannel3OfferSnapshot, isUuid, recordPolicyRun } from "../../../../../../lib/db";
 import { sanitizePurchasePact } from "../../../../../../lib/intent-pact";
+import { enforceRateLimit } from "../../../../lib/request-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,8 @@ export const dynamic = "force-dynamic";
 const EVIDENCE_TTL_MS = 60_000;
 
 export async function POST(request: Request) {
+  const rateLimited = enforceRateLimit(request, "discovery-evaluate", 240, 10 * 60_000);
+  if (rateLimited) return rateLimited;
   let body: unknown;
   try {
     body = await request.json();

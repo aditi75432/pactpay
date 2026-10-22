@@ -525,3 +525,6 @@ export function buildAuthorizedAmountPact(pact: PurchasePact, amount: string, cu
     ],
   };
 }
+
+/** Read-only preview of the test quote the server will compute, so the UI can show the exact breakdown before a hold. */
+export const previewChannel3TestQuote = quoteForItemPrice;

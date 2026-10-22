@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { normalizeChannel3SearchResponse } from "@pactpay/pact-core/channel3";
 import { storeChannel3OfferSnapshots } from "../../../../../../lib/db";
+import { enforceRateLimit } from "../../../../lib/request-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +13,8 @@ const MAX_RESULTS = 12;
 const EVIDENCE_TTL_MS = 10 * 60_000;
 
 export async function POST(request: Request) {
+  const rateLimited = enforceRateLimit(request, "discovery-search", 40, 10 * 60_000);
+  if (rateLimited) return rateLimited;
   let body: unknown;
   try {
     body = await request.json();

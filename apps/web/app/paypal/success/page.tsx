@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import AppShell from "../../components/AppShell";
+import { money } from "../../components/format";
 
 type TransactionView = {
   transactionId: string;
@@ -26,7 +28,7 @@ type AuthorizeResponse = {
 };
 
 export default function PayPalSuccess() {
-  const [status, setStatus] = useState("Checking your approved Sandbox order…");
+  const [status, setStatus] = useState("Confirming your payment hold with PayPal…");
   const [transaction, setTransaction] = useState<TransactionView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [protectedDemoFlow, setProtectedDemoFlow] = useState(false);
@@ -75,6 +77,10 @@ export default function PayPalSuccess() {
         if (cancelled) return;
         if (!tx) throw new Error("Authorization is still processing. Refresh this page in a moment to check the persisted status.");
         setTransaction(tx);
+        if (tx.status === "AUTHORIZED" && params.get("flow") === "protected-demo") {
+          window.location.replace(`/order/${encodeURIComponent(tx.transactionId)}`);
+          return;
+        }
         if (tx.status === "AUTHORIZED") {
           setStatus(params.get("flow") === "protected-demo"
             ? "PROTECTED SANDBOX AUTHORIZATION SUCCESSFUL — NO CAPTURE HAS BEEN PERFORMED. Continue to evaluate the bound Purchase Pact."
@@ -96,37 +102,44 @@ export default function PayPalSuccess() {
     return () => { cancelled = true; };
   }, []);
 
+  const failed = Boolean(error) && !transaction;
   return (
-    <main style={{ maxWidth: 760, margin: "64px auto", padding: 24, fontFamily: "Arial, sans-serif", color: "#17211b" }}>
-      <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1.2, color: "#467358" }}>PACTPAY · SANDBOX PAYMENT FOUNDATION</p>
-      <h1>PactPay — Authorized, Not Captured</h1>
-      <p aria-live="polite">{status}</p>
-      {error && <p style={{ color: "#a12828" }}>{error}</p>}
-      {transaction && (
-        <section style={{ marginTop: 24, padding: 20, border: "1px solid #d5dfd8", borderRadius: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Transaction receipt</h2>
-          <dl style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1fr) 2fr", gap: "10px 16px", overflowWrap: "anywhere" }}>
-            <dt>Local transaction</dt><dd>{transaction.transactionId}</dd>
-            <dt>PayPal order ID</dt><dd>{transaction.orderId ?? "Not available"}</dd>
-            <dt>Amount</dt><dd>{transaction.currency} {transaction.amount}</dd>
-            <dt>PactPay state</dt><dd>{transaction.status}</dd>
-            <dt>PayPal authorization ID</dt><dd>{transaction.authorizationId ?? "Not available"}</dd>
-            <dt>PayPal authorization status</dt><dd>{transaction.authorizationStatus ?? "Not available"}</dd>
-            <dt>Authorization expiry</dt><dd>{transaction.authorizationExpiresAt ?? "Not available"}</dd>
-          </dl>
-          <p style={{ marginBottom: 0, fontWeight: 700 }}>Capture performed by PactPay: No</p>
-        </section>
-      )}
-      {protectedDemoFlow && transaction?.status === "AUTHORIZED" && (
-        <section style={{ marginTop: 24, padding: 20, border: "1px solid #b8d4c2", background: "#f4fbf6", borderRadius: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Continue to the protected demo</h2>
-          <p>The Purchase Pact and simulated offer were bound before buyer approval. Inspect or change the controlled scenario, then run the server-side gate.</p>
-          <a href={`/protected-demo?transactionId=${encodeURIComponent(transaction.transactionId)}`} style={{ display: "inline-block", marginTop: 8, padding: "12px 16px", background: "#276449", color: "white", textDecoration: "none", borderRadius: 8, fontWeight: 700 }}>Open protected settlement console →</a>
-        </section>
-      )}
-      <p style={{ marginTop: 24, color: "#5d6b61" }}>
-        Safety rule: buyer approval is not a settlement decision. PactPay records and revalidates the authorization separately; only the protected, bound Sandbox demo can request settlement through its deterministic gate.
-      </p>
-    </main>
+    <AppShell narrow>
+      <div className="pp-card" aria-live="polite">
+        {!transaction && !failed && (
+          <>
+            <h1 className="pp-h2"><span className="pp-spinner pp-spinner-dark" style={{ marginRight: 12 }} aria-hidden="true" />Placing your payment hold…</h1>
+            <p className="pp-muted" style={{ marginTop: 10 }}>{status}</p>
+            <p className="pp-small pp-muted" style={{ marginTop: 6 }}>Nothing is being charged. We&apos;re only confirming the hold with PayPal.</p>
+          </>
+        )}
+        {failed && (
+          <>
+            <h1 className="pp-h2">We couldn&apos;t confirm the hold</h1>
+            <p className="pp-callout pp-callout-bad" role="alert" style={{ marginTop: 12 }}>{error}</p>
+            <p className="pp-small pp-muted" style={{ marginTop: 10 }}>No money was charged. You can safely go back and try again.</p>
+            <a href="/" className="pp-btn pp-btn-primary" style={{ marginTop: 16 }}>Back to start</a>
+          </>
+        )}
+        {transaction && (
+          <>
+            <h1 className="pp-h2">{transaction.status === "AUTHORIZED" ? "Payment held. Nothing charged." : "Almost there"}</h1>
+            <p className="pp-muted" style={{ marginTop: 10 }}>{status}</p>
+            {error && <p className="pp-callout pp-callout-bad" style={{ marginTop: 12 }}>{error}</p>}
+            <dl className="pp-kv" style={{ marginTop: 18 }}>
+              <dt>Amount held</dt><dd>{money(Number(transaction.amount), transaction.currency.trim())}</dd>
+              <dt>State</dt><dd>{transaction.status}</dd>
+              <dt>PayPal order</dt><dd>{transaction.orderId ?? "—"}</dd>
+              <dt>PayPal authorization</dt><dd>{transaction.authorizationId ?? "—"}</dd>
+              <dt>Captured by PactPay</dt><dd>No</dd>
+            </dl>
+            {protectedDemoFlow && transaction.status === "AUTHORIZED" && (
+              <a className="pp-btn pp-btn-primary" style={{ marginTop: 18 }} href={`/order/${encodeURIComponent(transaction.transactionId)}`}>Continue</a>
+            )}
+            <p className="pp-tiny pp-muted" style={{ marginTop: 18 }}>PayPal Sandbox test mode. Buyer approval is not a settlement decision: PactPay checks the offer again before any money is released.</p>
+          </>
+        )}
+      </div>
+    </AppShell>
   );
 }

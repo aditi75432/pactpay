@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { normalizeIntentCompilation, ruleBasedIntentCompilation } from "../../../../../../lib/intent-pact";
+import { enforceRateLimit } from "../../../../lib/request-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +51,8 @@ function fallbackResponse(intent: string, reason: string) {
 }
 
 export async function POST(request: Request) {
+  const rateLimited = enforceRateLimit(request, "intent-compile", 15, 10 * 60_000);
+  if (rateLimited) return rateLimited;
   let body: unknown;
   try { body = await request.json(); }
   catch { return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 }); }

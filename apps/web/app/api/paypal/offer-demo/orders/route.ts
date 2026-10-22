@@ -11,6 +11,9 @@ import {
   storeProtectedDemoContext,
 } from "../../../../../../../lib/db";
 import { sanitizePurchasePact } from "../../../../../../../lib/intent-pact";
+import { getPactApproval } from "../../../../../../../lib/pact-approvals";
+import { enforceRateLimit } from "../../../../../lib/request-guard";
+import { readSessionId } from "../../../../../lib/session";
 import { createAuthorizationOrder, isPayPalSandboxConfigured } from "../../../../../../../lib/paypal";
 
 export const runtime = "nodejs";
@@ -34,6 +37,8 @@ function publicConstraintDescription(id: string, pact: PurchasePact): string {
 
 export async function POST(request: Request) {
   let transactionId: string | null = null;
+  const limited = enforceRateLimit(request, "offer-order", 12, 10 * 60_000);
+  if (limited) return limited;
   try {
     if (!isPayPalSandboxConfigured()) {
       return NextResponse.json({ error: "Offer-bound settlement is disabled unless PAYPAL_BASE_URL points to a recognized PayPal Sandbox hostname." }, { status: 503 });
@@ -49,27 +54,49 @@ export async function POST(request: Request) {
     }
 
     let pact: PurchasePact;
-    try {
-      const sanitized = sanitizePurchasePact(body.pact);
-      if (sanitized.currency !== "USD") {
+    let approvedPactHash: string | null = null;
+    if (typeof body.approvalId === "string") {
+      // Preferred path: the Pact was approved server-side and is bound to this browser session.
+      const sessionId = await readSessionId();
+      if (!sessionId) {
+        return NextResponse.json({ error: "We couldn't find your approval session. Approve your rules again to continue. No order was created." }, { status: 403 });
+      }
+      const approval = await getPactApproval(sessionId, body.approvalId);
+      if (!approval) {
+        return NextResponse.json({ error: "That approval was not found for this browser, or its stored rules no longer verify. Approve your rules again. No order was created." }, { status: 403 });
+      }
+      pact = approval.pact_json;
+      approvedPactHash = approval.pact_hash.toLowerCase();
+      if (pact.currency !== "USD") {
         return NextResponse.json({ error: "The protected PayPal Sandbox test-checkout adapter currently supports USD Pacts only. No order was created." }, { status: 422 });
       }
-      // Authority is minted here, server-side, only after the explicit confirmation above.
-      // The AI and browser are never granted capture authority.
-      pact = {
-        ...sanitized,
-        authority: {
-          canSearch: true,
-          canCompare: true,
-          canCreateOrder: true,
-          canAuthorize: true,
-          canCapture: false,
-          canSubstitute: false,
-          canChangeHardConstraints: false,
-        },
-      };
-    } catch (error) {
-      return NextResponse.json({ error: error instanceof Error ? error.message : "The approved Purchase Pact failed validation." }, { status: 400 });
+      if (pact.authority?.canCapture !== false || pact.authority?.canChangeHardConstraints !== false) {
+        return NextResponse.json({ error: "The stored Pact grants authority it must never grant. Settlement fails closed." }, { status: 409 });
+      }
+    } else if (process.env.PACTPAY_ALLOW_CLIENT_PACT === "1") {
+      // Legacy development path. Disabled by default because a browser-supplied Pact is not an approval record.
+      try {
+        const sanitized = sanitizePurchasePact(body.pact);
+        if (sanitized.currency !== "USD") {
+          return NextResponse.json({ error: "The protected PayPal Sandbox test-checkout adapter currently supports USD Pacts only. No order was created." }, { status: 422 });
+        }
+        pact = {
+          ...sanitized,
+          authority: {
+            canSearch: true,
+            canCompare: true,
+            canCreateOrder: true,
+            canAuthorize: true,
+            canCapture: false,
+            canSubstitute: false,
+            canChangeHardConstraints: false,
+          },
+        };
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : "The approved Purchase Pact failed validation." }, { status: 400 });
+      }
+    } else {
+      return NextResponse.json({ error: "Approve your rules first. Orders are only created from a Pact approved and stored on the server. No order was created." }, { status: 400 });
     }
 
     const source = await getChannel3OfferSnapshot(body.snapshotId);
@@ -140,6 +167,9 @@ export async function POST(request: Request) {
     }
     const amount = total.toFixed(2);
     const pactHash = sha256(pact);
+    if (approvedPactHash && pactHash !== approvedPactHash) {
+      return NextResponse.json({ error: "The stored Pact no longer matches its approved hash. Settlement fails closed and no order was created." }, { status: 409 });
+    }
     const baselineOfferHash = sha256(baselineOffer);
     const authorizeRequestId = randomUUID();
 

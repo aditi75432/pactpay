@@ -28,6 +28,14 @@ function publicTransaction(tx: NonNullable<Awaited<ReturnType<typeof getTransact
   };
 }
 
+function gateReasonsOf(value: unknown): string[] {
+  if (!value || typeof value !== "object" || !("settlementGate" in value)) return [];
+  const gate = (value as Record<string, unknown>).settlementGate;
+  if (!gate || typeof gate !== "object") return [];
+  const reasons = (gate as Record<string, unknown>).reasons;
+  return Array.isArray(reasons) ? reasons.filter((item): item is string => typeof item === "string") : [];
+}
+
 export async function GET(_request: Request, context: { params: Promise<{ transactionId: string }> }) {
   try {
     const { transactionId } = await context.params;
@@ -59,6 +67,7 @@ export async function GET(_request: Request, context: { params: Promise<{ transa
           ? (purchase.gate_verification as Record<string, unknown>).verification
           : purchase.gate_verification,
         gateHash: purchase.gate_hash,
+        gateReasons: gateReasonsOf(purchase.gate_verification),
         gateVerifiedAt: purchase.gate_verified_at,
         gateValidUntil: purchase.gate_valid_until,
       },

@@ -1,7 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PurchasePact } from "@pactpay/pact-core";
+import { previewChannel3TestQuote } from "@pactpay/pact-core/settlement-demo";
+import { applyCheckoutQuote } from "@pactpay/pact-core/checkout-quote";
+import AppShell from "../components/AppShell";
+import StepTracker from "../components/StepTracker";
 
 type LiveOffer = {
   snapshotId: string;
@@ -41,6 +45,7 @@ type AgentStep = { label: string; status: StepStatus; detail: string };
 
 const STORAGE_KEY = "pactpay.activePact.v1";
 const META_KEY = "pactpay.activeIntent.v1";
+const APPROVAL_KEY = "pactpay.activeApproval.v1";
 const ACCESSORY_TERMS = /\b(case|cover|protector|sleeve|skin|holder|charm|strap|replacement|ear\s?tips?|earbud\s?tips?|carry(?:ing)?\s?pouch|mount|clip)\b/i;
 const STOP_WORDS = new Set(["find", "me", "a", "an", "the", "with", "under", "over", "less", "than", "at", "most", "least", "price", "catalog", "item", "in", "stock", "only", "brand", "prefer", "usd", "inr", "for", "of", "and", "or", "buy", "get", "want", "please"]);
 
@@ -190,7 +195,7 @@ export default function ShoppingAgentPage() {
           });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error ?? "Policy evaluation failed.");
-          const evaluation = payload as EvalResult;
+          const evaluation = applyCheckoutQuote(payload as EvalResult, { price: offer.price, currency: offer.currency }, pact?.constraints ?? []);
           evaluated.push({ offer, evaluation, verdict: verdictFor(evaluation), relevance: relevanceScore(offer, query), refreshed: false, refreshStatus: "Not refreshed", reason: "Evaluation complete; currentness not yet re-confirmed." });
         } catch (caught) {
           evaluated.push({
@@ -231,7 +236,7 @@ export default function ShoppingAgentPage() {
           });
           const evalPayload = await evalResponse.json();
           if (!evalResponse.ok) throw new Error(evalPayload.error ?? "Refreshed snapshot evaluation failed.");
-          const freshEvaluation = evalPayload as EvalResult;
+          const freshEvaluation = applyCheckoutQuote(evalPayload as EvalResult, { price: refreshedOffer.price, currency: refreshedOffer.currency }, pact?.constraints ?? []);
           const freshCandidate: Candidate = {
             offer: refreshedOffer,
             evaluation: freshEvaluation,
@@ -293,71 +298,225 @@ export default function ShoppingAgentPage() {
     window.location.href = `/discover?query=${encodeURIComponent(query)}&fromAgent=1&focusSnapshotId=${encodeURIComponent(candidate.offer.snapshotId)}`;
   }
 
+
+  const [selected, setSelected] = useState<Candidate | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [holding, setHolding] = useState(false);
+  const [holdError, setHoldError] = useState<string | null>(null);
+  const [showOthers, setShowOthers] = useState(false);
+  const autoStarted = useRef(false);
+
+  useEffect(() => {
+    if (loadingPact || !pact || !query.trim() || autoStarted.current) return;
+    autoStarted.current = true;
+    void runAgent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadingPact, pact, query]);
+
+  async function holdPayment(candidate: Candidate) {
+    if (!acknowledged || holding) return;
+    setHolding(true);
+    setHoldError(null);
+    try {
+      let approvalId: string | null = null;
+      try {
+        const raw = window.sessionStorage.getItem(APPROVAL_KEY);
+        const parsed = raw ? JSON.parse(raw) as { approvalId?: unknown; pactId?: unknown } : null;
+        if (parsed && typeof parsed.approvalId === "string" && parsed.pactId === pact?.id) approvalId = parsed.approvalId;
+      } catch { /* handled below */ }
+      if (!approvalId) throw new Error("We can't find your saved approval. Go back and approve your rules again.");
+      const response = await fetch("/api/paypal/offer-demo/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ snapshotId: candidate.offer.snapshotId, approvalId, approved: true, sandboxQuoteAcknowledged: true }),
+        cache: "no-store",
+      });
+      const payload = await response.json() as { approvalUrl?: string; transactionId?: string; error?: string };
+      if (!response.ok || !payload.approvalUrl || !payload.transactionId) throw new Error(payload.error ?? "We couldn't place the payment hold.");
+      window.location.assign(payload.approvalUrl);
+    } catch (caught) {
+      setHoldError(caught instanceof Error ? caught.message : "We couldn't place the payment hold.");
+      setHolding(false);
+    }
+  }
+
+  const ready = candidates.filter((item) => item.refreshed && item.verdict === "PASS").sort((a, b) => b.relevance - a.relevance || a.evaluation.summary.softFailures - b.evaluation.summary.softFailures || a.offer.price - b.offer.price);
+  const best = ready[0] ?? null;
+  const others = candidates.filter((item) => item.offer.snapshotId !== best?.offer.snapshotId);
+  const intentTitle = intent || query;
+  const hardRules = pact?.constraints.filter((rule) => rule.severity === "hard" && rule.field !== "currency") ?? [];
+
+  function verdictBadge(item: Candidate) {
+    if (item.refreshed && item.verdict === "PASS") return <span className="pp-badge pp-badge-good">Matches your rules</span>;
+    if (item.verdict === "BLOCKED") return <span className="pp-badge pp-badge-bad">Breaks a rule</span>;
+    if (item.verdict === "NEEDS_EVIDENCE") return <span className="pp-badge pp-badge-warn">Can&apos;t confirm yet</span>;
+    return <span className="pp-badge pp-badge-neutral">Not verified</span>;
+  }
+
+  function OfferImage({ offer }: { offer: LiveOffer }) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return offer.imageUrl ? <img className="pp-offer-img" src={offer.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <div className="pp-offer-img pp-offer-img-empty">No photo</div>;
+  }
+
+  const stepsDone = steps.filter((step) => step.status === "done").length;
+  const searching = running || (!finished && !error && Boolean(pact) && Boolean(query));
+
   return (
-    <main style={{ minHeight: "100vh", padding: "28px 20px 64px", background: "radial-gradient(ellipse at 15% 0%, #16372d 0%, #091311 48%, #07100e 100%)", color: "#edf7f2", fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" }}>
-      <div style={{ maxWidth: 1180, margin: "0 auto" }}>
-        <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", paddingBottom: 17, marginBottom: 34, borderBottom: "1px solid #28443a" }}>
-          <a href="/" style={{ color: "#edf7f2", textDecoration: "none", fontWeight: 950, letterSpacing: 2 }}>PACTPAY <span style={{ color: "#7fe2ab" }}>///</span></a>
-          <nav aria-label="Main navigation" style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 14 }}><a href="/discover" style={{ color: "#a5b8b0" }}>Discovery</a><a href="/control-center" style={{ color: "#a5b8b0" }}>Control Center ↗</a><a href="/evidence" style={{ color: "#a5b8b0" }}>Evidence Desk</a><a href="/pact-lab" style={{ color: "#a5b8b0" }}>Policy Lab</a></nav>
-          <span style={{ color: "#ffd891", border: "1px solid #705526", borderRadius: 999, padding: "7px 10px", fontSize: 10, fontWeight: 900, letterSpacing: 1 }}>AI ASSISTED · HUMAN APPROVAL</span>
-        </header>
+    <AppShell>
+      <StepTracker current={2} />
+      <div className="pp-stack" style={{ gap: 24 }}>
+        <div>
+          <p className="pp-eyebrow">Step 3 of 5</p>
+          <h1 className="pp-h2" style={{ marginTop: 8 }}>{searching ? "Your agent is shopping…" : best ? "Here's the best match" : "Here's what the agent found"}</h1>
+          {intentTitle && <p className="pp-muted" style={{ marginTop: 8, maxWidth: "44em" }}>You asked: “{intentTitle}”</p>}
+        </div>
 
-        <section style={{ maxWidth: 850, marginBottom: 24 }}>
-          <p style={{ color: "#7fe2ab", fontSize: 12, fontWeight: 900, letterSpacing: 2, margin: "0 0 12px" }}>M0.14 · TOOL-USING SHOPPING AGENT</p>
-          <h1 style={{ fontSize: "clamp(38px, 6vw, 66px)", letterSpacing: -2.8, lineHeight: 0.98, margin: 0 }}>Don't just find a deal.<br /><span style={{ color: "#7fe2ab" }}>Check it, then explain it.</span></h1>
-          <p style={{ maxWidth: 820, color: "#a5b8b0", fontSize: 16, lineHeight: 1.75, marginTop: 19 }}>PactPay's shopping agent chains three real tools: live Channel3 search, deterministic Purchase Pact evaluation, and a fresh product+merchant re-check for leading candidates. It recommends; you choose. It never creates a PayPal order or captures funds during this run.</p>
-        </section>
+        {loadingPact && <div className="pp-card"><span className="pp-spinner pp-spinner-dark" aria-hidden="true" /> Loading your rules…</div>}
 
-        {loadingPact ? <section style={{ padding: 20, border: "1px solid #28443a", background: "#0e1c19", borderRadius: 15, color: "#a5b8b0" }}>Loading your approved Purchase Pact…</section> : !pact ? <section style={{ padding: 22, border: "1px solid #6c5529", background: "#19160e", borderRadius: 15 }}><h2 style={{ marginTop: 0 }}>Approve a Purchase Pact first</h2><p style={{ color: "#a5b8b0", lineHeight: 1.7 }}>The Shopping Agent must not invent a budget or use unrelated default laptop rules. Create and approve the rules you want enforced, then return here.</p><a href="/" style={{ color: "#7fe2ab", fontWeight: 850 }}>Open Pact Composer →</a></section> : <>
-          <section style={{ padding: 18, border: "1px solid #42664c", background: "linear-gradient(110deg,#10241d,#112c20 72%,#1b3322)", borderRadius: 16, marginBottom: 18 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
-              <div style={{ flex: "1 1 400px", minWidth: 0 }}><p style={{ margin: "0 0 8px", color: "#7fe2ab", fontSize: 11, fontWeight: 900, letterSpacing: 1.5 }}>YOUR APPROVED PURCHASE PACT</p><h2 style={{ margin: 0, fontSize: 22 }}>{intent || "Approved purchase request"}</h2><p style={{ margin: "8px 0 0", color: "#a5b8b0", fontSize: 12 }}>Pact ID: {pact.id} · {hardRuleCount} hard rule(s) · {softRuleCount} preference(s) · AI source: {compiler === "GROQ" ? "Groq" : compiler === "RULE_BASED_FALLBACK" ? "labelled local fallback" : "not recorded"}</p></div>
-              <a href="/" style={{ color: "#a5b8b0", fontSize: 13 }}>Edit Pact ↗</a>
+        {!loadingPact && !pact && (
+          <div className="pp-card">
+            <h2 className="pp-h3">We don&apos;t have your approved rules</h2>
+            <p className="pp-muted" style={{ marginTop: 8 }}>{error ?? "Start by describing what you want and approving your rules."}</p>
+            <a className="pp-btn pp-btn-primary" style={{ marginTop: 16 }} href="/">Start over</a>
+          </div>
+        )}
+
+        {pact && (
+          <div className="pp-card-flat">
+            <div className="pp-row pp-between">
+              <p className="pp-small" style={{ fontWeight: 700 }}>Your approved rules</p>
+              <span className="pp-badge pp-badge-info">{hardRuleCount} must · {softRuleCount} nice-to-have</span>
             </div>
-            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 14 }}>{pact.constraints.map((rule) => <span key={rule.id} style={{ border: `1px solid ${rule.severity === "hard" ? "#3a6845" : "#534b70"}`, color: rule.severity === "hard" ? "#c7f1c0" : "#d7c9ff", background: rule.severity === "hard" ? "#163324" : "#282239", borderRadius: 100, padding: "6px 9px", fontSize: 12 }}>{rule.severity === "hard" ? "HARD" : "PREFERENCE"} · {rule.description}</span>)}</div>
-          </section>
+            <ul style={{ margin: "10px 0 0", paddingLeft: 18 }} className="pp-small">
+              {hardRules.map((rule) => <li key={rule.id}>{rule.description}</li>)}
+            </ul>
+            {compiler === "RULE_BASED_FALLBACK" && <p className="pp-tiny pp-muted" style={{ marginTop: 8 }}>These rules were written by the basic parser because AI was unavailable.</p>}
+          </div>
+        )}
 
-          <section style={{ display: "grid", gridTemplateColumns: "minmax(0,1.15fr) minmax(290px,.85fr)", gap: 16, alignItems: "start", marginBottom: 20 }}>
-            <div style={{ padding: 20, border: "1px solid #28443a", background: "#0e1c19", borderRadius: 16 }}>
-              <label htmlFor="agent-query" style={{ display: "block", color: "#a5b8b0", fontSize: 12, fontWeight: 800, marginBottom: 8 }}>WHAT SHOULD THE AGENT SEARCH FOR?</label>
-              <input id="agent-query" value={query} onChange={(event) => setQuery(event.currentTarget.value)} maxLength={180} onKeyDown={(event) => { if (event.key === "Enter" && !running) void runAgent(); }} placeholder="e.g. wireless mouse, USB-C charger" style={{ width: "100%", border: "1px solid #28443a", background: "#07110e", borderRadius: 10, color: "#edf7f2", padding: "13px 14px", fontSize: 16 }} />
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 13 }}><button type="button" onClick={() => void runAgent()} disabled={running || !query.trim()} style={{ border: "1px solid #8df0b9", borderRadius: 10, padding: "13px 17px", background: running ? "#315141" : "#7fe2ab", color: "#07130e", fontWeight: 900, fontSize: 14, cursor: running ? "wait" : "pointer", opacity: !query.trim() ? 0.5 : 1 }}>{running ? "Agent working…" : finished ? "Run again →" : "Run shopping agent →"}</button><span style={{ color: "#7c9387", fontSize: 12 }}>No PayPal side effects</span></div>
-              {error && <p role="alert" style={{ color: "#ffb8b8", fontSize: 13, lineHeight: 1.6, marginBottom: 0 }}>{error}</p>}
+        {pact && (searching || (steps.some((step) => step.status !== "waiting") && !finished)) && (
+          <div className="pp-card" aria-live="polite">
+            <div className="pp-progress">
+              {steps.map((step, index) => (
+                <div className="pp-progress-item" data-state={step.status === "done" ? "done" : step.status === "issue" ? "issue" : "todo"} key={step.label}>
+                  <span className="pp-progress-icon">{step.status === "done" ? "✓" : step.status === "issue" ? "!" : step.status === "working" ? <span className="pp-spinner pp-spinner-dark" aria-hidden="true" /> : index + 1}</span>
+                  <div>
+                    <p style={{ fontWeight: 700 }}>{["Searching real stores", "Checking each offer against your rules", "Re-confirming the best ones"][index]}</p>
+                    <p className="pp-small pp-muted">{step.status === "waiting" ? "Waiting" : step.detail}</p>
+                    {index === 1 && step.status === "working" && progress.total > 0 && <p className="pp-tiny pp-muted pp-num">{progress.complete} of {progress.total} checked</p>}
+                  </div>
+                </div>
+              ))}
             </div>
-            <div style={{ padding: 19, border: "1px solid #28443a", background: "#0e1c19", borderRadius: 16 }}>
-              <h2 style={{ margin: "0 0 13px", fontSize: 17 }}>What the agent actually does</h2>
-              <div style={{ display: "grid", gap: 12 }}>
-                {["Calls Channel3 and saves actual merchant offer snapshots", "Asks PactPay's deterministic policy engine to check every returned snapshot", "Refreshes up to three leading candidates from the same product+merchant offer and checks the new snapshot again"].map((line, index) => <div key={line} style={{ display: "grid", gridTemplateColumns: "26px 1fr", gap: 9, alignItems: "start" }}><span style={{ display: "grid", placeItems: "center", width: 25, height: 25, borderRadius: 8, background: "#173b2b", color: "#7fe2ab", fontSize: 12, fontWeight: 900 }}>{index + 1}</span><span style={{ color: "#a5b8b0", fontSize: 12, lineHeight: 1.6 }}>{line}</span></div>)}
+            <p className="pp-tiny pp-muted" style={{ marginTop: 14 }}>{stepsDone} of 3 steps done. No payment is made during shopping.</p>
+          </div>
+        )}
+
+        {error && pact && <div className="pp-callout pp-callout-bad" role="alert">{error} <button type="button" className="pp-link-btn" onClick={() => { autoStarted.current = true; void runAgent(); }}>Try again</button></div>}
+
+        {finished && !best && (
+          <div className="pp-callout pp-callout-warn" role="status">
+            <p style={{ fontWeight: 700 }}>None of these offers can be chosen yet.</p>
+            <p className="pp-small" style={{ marginTop: 4 }}>{notice ?? "Nothing matched every must-have rule with fresh proof."} Each offer below says exactly which rule it fails or can&apos;t prove.</p>
+            <div className="pp-row" style={{ marginTop: 10 }}>
+              <a className="pp-btn pp-btn-secondary pp-btn-sm" href="/">Change my rules</a>
+              <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => { autoStarted.current = true; void runAgent(); }}>Search again</button>
+            </div>
+          </div>
+        )}
+
+        {best && (
+          <section className="pp-card pp-offer-best pp-enter" aria-labelledby="best-title">
+            <div className="pp-row pp-between" style={{ marginBottom: 14 }}>
+              <span className="pp-badge pp-badge-good">Best match · re-confirmed just now</span>
+              {verdictBadge(best)}
+            </div>
+            <div className="pp-offer">
+              <OfferImage offer={best.offer} />
+              <div>
+                <h2 className="pp-h3" id="best-title">{best.offer.productTitle}</h2>
+                <p className="pp-small pp-muted">{best.offer.brand ? `${best.offer.brand} · ` : ""}sold by {best.offer.offerDomain}</p>
+                <p className="pp-price" style={{ marginTop: 8 }}>{money(best.offer.price, best.offer.currency)}</p>
+                <p className="pp-small pp-muted">Catalog price · {best.offer.availability ? best.offer.availability.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase() : "availability not listed"}</p>
               </div>
             </div>
+            <p className="pp-small" style={{ marginTop: 14 }}>{best.reason}</p>
+
+            {selected?.offer.snapshotId !== best.offer.snapshotId ? (
+              <button type="button" className="pp-btn pp-btn-primary pp-btn-block" style={{ marginTop: 18 }} onClick={() => { setSelected(best); setAcknowledged(false); setHoldError(null); }}>Choose this one</button>
+            ) : (
+              <HoldPanel candidate={best} acknowledged={acknowledged} setAcknowledged={setAcknowledged} holding={holding} onHold={() => holdPayment(best)} onCancel={() => setSelected(null)} error={holdError} />
+            )}
           </section>
+        )}
 
-          <section style={{ padding: 20, border: "1px solid #28443a", background: "#0e1c19", borderRadius: 16, marginBottom: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 15 }}><h2 style={{ margin: 0, fontSize: 19 }}>Agent activity</h2>{running && progress.total > 0 && <span style={{ color: "#7fe2ab", fontSize: 12, fontWeight: 850 }}>Evaluated {progress.complete} / {progress.total}</span>}</div>
-            <div style={{ display: "grid", gap: 10 }}>{steps.map((step, index) => {
-              const color = step.status === "done" ? "#7fe2ab" : step.status === "issue" ? "#ffd891" : step.status === "working" ? "#c7f1c0" : "#7c9387";
-              return <div key={step.label} style={{ display: "grid", gridTemplateColumns: "28px minmax(0,1fr)", gap: 11, padding: 12, borderRadius: 10, border: `1px solid ${step.status === "working" ? "#42664c" : "#20372f"}`, background: step.status === "working" ? "#10251d" : "#091512" }}><span style={{ display: "grid", placeItems: "center", width: 27, height: 27, borderRadius: 8, background: `${color}1e`, color, fontWeight: 950 }}>{step.status === "done" ? "✓" : step.status === "working" ? "…" : step.status === "issue" ? "!" : index + 1}</span><div><div style={{ fontWeight: 850, fontSize: 14, color }}>{step.label}</div><p style={{ margin: "4px 0 0", color: "#a5b8b0", fontSize: 12, lineHeight: 1.55 }}>{step.detail}</p></div></div>;
-            })}</div>
-          </section>
-
-          {notice && <section role="status" style={{ padding: 17, borderRadius: 13, border: `1px solid ${recommended ? "#42664c" : "#705526"}`, background: recommended ? "#10251d" : "#19160e", marginBottom: 18 }}><h2 style={{ margin: "0 0 7px", fontSize: 18, color: recommended ? "#7fe2ab" : "#ffd891" }}>{recommended ? "A current candidate meets the known rules" : "No fully verified match yet"}</h2><p style={{ margin: 0, color: "#c2d2c8", fontSize: 14, lineHeight: 1.65 }}>{notice}</p></section>}
-
-          {finished && <section style={{ marginBottom: 22 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 13 }}><h2 style={{ margin: 0, fontSize: 22 }}>What the agent found</h2><span style={{ color: "#7c9387", fontSize: 12 }}>{candidates.length} listing(s) · {searchedAt ? `searched ${localTime(searchedAt)}` : "latest run"}</span></div>
-            {recommended && <article style={{ display: "grid", gridTemplateColumns: "112px minmax(0,1fr)", gap: 17, padding: 19, borderRadius: 16, border: "1px solid #54835a", background: "linear-gradient(110deg,#10251d,#122b20 72%,#1d3725)", marginBottom: 14 }}>
-              {recommended.offer.imageUrl ? <img src={recommended.offer.imageUrl} alt={recommended.offer.productTitle} loading="lazy" referrerPolicy="no-referrer" style={{ width: 112, height: 112, objectFit: "contain", background: "#07110e", borderRadius: 10 }} /> : <div style={{ display: "grid", placeItems: "center", width: 112, height: 112, background: "#07110e", color: "#7c9387", borderRadius: 10 }}>No image</div>}
-              <div style={{ minWidth: 0 }}><p style={{ margin: "0 0 6px", color: "#7fe2ab", fontSize: 11, fontWeight: 950, letterSpacing: 1.2 }}>BEST CURRENT CANDIDATE · RE-CHECKED</p><h3 style={{ margin: 0, fontSize: 21, lineHeight: 1.35 }}>{recommended.offer.productTitle}</h3><p style={{ color: "#a5b8b0", fontSize: 13, margin: "6px 0 8px" }}>{recommended.offer.brand ?? "Brand not supplied"} · {recommended.offer.offerDomain} · {localTime(recommended.offer.fetchedAt)}</p><p style={{ margin: "0 0 9px", fontWeight: 900, fontSize: 25 }}>{money(recommended.offer.price, recommended.offer.currency)} <span style={{ color: "#a5b8b0", fontSize: 12, fontWeight: 500 }}>catalog item price</span></p><p style={{ margin: "0 0 13px", color: "#c2d2c8", fontSize: 13, lineHeight: 1.6 }}>{recommended.reason}</p><div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}><button type="button" onClick={() => continueWith(recommended)} style={{ border: "1px solid #8df0b9", borderRadius: 9, padding: "10px 13px", background: "#7fe2ab", color: "#07130e", fontWeight: 900, cursor: "pointer" }}>Continue with this offer →</button><a href={recommended.offer.offerUrl} target="_blank" rel="noreferrer noopener" style={{ display: "inline-flex", alignItems: "center", color: "#7fe2ab", padding: "9px 2px", fontSize: 13, fontWeight: 800 }}>Open merchant listing ↗</a></div></div>
-            </article>}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 12 }}>
-              {candidates.filter((candidate) => candidate.offer.snapshotId !== recommended?.offer.snapshotId).slice(0, 8).map((candidate) => <article key={candidate.offer.snapshotId} style={{ display: "grid", gridTemplateColumns: "72px minmax(0,1fr)", gap: 12, padding: 14, borderRadius: 13, border: "1px solid #28443a", background: "#0e1c19" }}>
-                {candidate.offer.imageUrl ? <img src={candidate.offer.imageUrl} alt={candidate.offer.productTitle} loading="lazy" referrerPolicy="no-referrer" style={{ width: 72, height: 72, objectFit: "contain", background: "#07110e", borderRadius: 8 }} /> : <div style={{ width: 72, height: 72, background: "#07110e", borderRadius: 8 }} />}
-                <div style={{ minWidth: 0 }}><div style={{ color: badgeColor(candidate.verdict), fontSize: 10, fontWeight: 950, letterSpacing: 0.7 }}>{candidate.refreshed ? candidate.verdict.replace(/_/g, " ") : "NOT RE-CONFIRMED"}</div><h3 style={{ margin: "5px 0", fontSize: 15, lineHeight: 1.35 }}>{candidate.offer.productTitle}</h3><p style={{ margin: 0, color: "#a5b8b0", fontSize: 12 }}>{money(candidate.offer.price, candidate.offer.currency)} · {candidate.offer.offerDomain}</p><p style={{ margin: "6px 0 0", color: "#9fb2a7", fontSize: 12, lineHeight: 1.5 }}>{candidate.reason}</p>{candidate.refreshed && <button type="button" onClick={() => continueWith(candidate)} style={{ marginTop: 9, border: "1px solid #42664c", borderRadius: 8, background: "transparent", color: "#7fe2ab", padding: "8px 10px", fontWeight: 800, cursor: "pointer" }}>Inspect offer →</button>}</div>
-              </article>)}
+        {finished && others.length > 0 && (
+          <section aria-labelledby="others-title">
+            <div className="pp-row pp-between">
+              <h2 className="pp-h3" id="others-title">{best ? "Other offers the agent looked at" : "Offers the agent looked at"}</h2>
+              <button type="button" className="pp-link-btn" onClick={() => setShowOthers((value) => !value)}>{showOthers || !best ? "Hide" : `Show ${others.length}`}</button>
             </div>
-            <p style={{ margin: "15px 0 0", color: "#7c9387", fontSize: 12, lineHeight: 1.6 }}>A rules pass is not a merchant checkout confirmation. Shipping, tax, delivery and returns remain unknown unless supported by separate current evidence. This agent run created no PayPal order, authorization, capture or void.</p>
-          </section>}
-        </>}
+            {(showOthers || !best) && (
+              <div className="pp-stack" style={{ marginTop: 14 }}>
+                {others.map((item) => {
+                  const canChoose = item.refreshed && item.verdict === "PASS";
+                  return (
+                    <article className="pp-card-flat pp-offer" key={item.offer.snapshotId}>
+                      <OfferImage offer={item.offer} />
+                      <div>
+                        <div className="pp-row pp-between">
+                          <h3 style={{ fontSize: 16, fontWeight: 700 }}>{item.offer.productTitle}</h3>
+                          {verdictBadge(item)}
+                        </div>
+                        <p className="pp-small pp-muted">{item.offer.offerDomain} · <span className="pp-num">{money(item.offer.price, item.offer.currency)}</span></p>
+                        <p className="pp-small" style={{ marginTop: 6 }}>{item.reason}</p>
+                        {canChoose && selected?.offer.snapshotId !== item.offer.snapshotId && <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" style={{ marginTop: 10 }} onClick={() => { setSelected(item); setAcknowledged(false); setHoldError(null); }}>Choose this one</button>}
+                        {canChoose && selected?.offer.snapshotId === item.offer.snapshotId && <HoldPanel candidate={item} acknowledged={acknowledged} setAcknowledged={setAcknowledged} holding={holding} onHold={() => holdPayment(item)} onCancel={() => setSelected(null)} error={holdError} />}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
+        {finished && (
+          <p className="pp-small pp-muted">
+            Want to look at every listing and the evidence behind each decision? <button type="button" className="pp-link-btn" onClick={() => { const target = best ?? candidates[0]; if (target) continueWith(target); }}>Open the full offer workspace</button>
+          </p>
+        )}
       </div>
-    </main>
+    </AppShell>
+  );
+}
+
+function HoldPanel(props: { candidate: Candidate; acknowledged: boolean; setAcknowledged: (value: boolean) => void; holding: boolean; onHold: () => void; onCancel: () => void; error: string | null }) {
+  const { candidate } = props;
+  const quote = previewChannel3TestQuote(candidate.offer.price);
+  return (
+    <div style={{ marginTop: 18, borderTop: "1px solid var(--pp-line)", paddingTop: 18 }} className="pp-enter">
+      <h3 className="pp-h3">Place a payment hold (test mode)</h3>
+      <p className="pp-small pp-muted" style={{ margin: "6px 0 12px" }}>PayPal will hold this amount. It&apos;s only released if the offer still matches your rules.</p>
+      <table className="pp-quote">
+        <tbody>
+          <tr><td>Item</td><td>{money(quote.itemPrice, "USD")}</td></tr>
+          <tr><td>Shipping (test value)</td><td>{money(quote.shippingFee, "USD")}</td></tr>
+          <tr><td>Tax (test value, 8%)</td><td>{money(quote.taxAmount, "USD")}</td></tr>
+          <tr className="pp-quote-total"><td>Held on PayPal</td><td>{money(quote.total, "USD")}</td></tr>
+        </tbody>
+      </table>
+      <label className="pp-check" style={{ marginTop: 14 }}>
+        <input type="checkbox" checked={props.acknowledged} onChange={(event) => props.setAcknowledged(event.target.checked)} />
+        <span>I understand this uses PayPal Sandbox test money and fixed test shipping and tax. No store order is placed.</span>
+      </label>
+      {props.error && <p className="pp-callout pp-callout-bad" role="alert" style={{ marginTop: 12 }}>{props.error}</p>}
+      <div className="pp-row" style={{ marginTop: 14 }}>
+        <button type="button" className="pp-btn pp-btn-primary" onClick={props.onHold} disabled={!props.acknowledged || props.holding}>
+          {props.holding ? <><span className="pp-spinner" aria-hidden="true" /> Opening PayPal…</> : "Hold payment with PayPal"}
+        </button>
+        <button type="button" className="pp-btn pp-btn-secondary" onClick={props.onCancel} disabled={props.holding}>Not this one</button>
+      </div>
+    </div>
   );
 }

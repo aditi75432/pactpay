@@ -18,6 +18,9 @@
     "./channel3": "./src/channel3.ts",
     "./merchant-evidence": "./src/merchant-evidence.ts",
     "./settlement-state": "./src/settlement-state.ts",
-    "./settlement-demo": "./src/settlement-demo.ts"
+    "./settlement-demo": "./src/settlement-demo.ts",
+    "./explain": "./src/explain.ts",
+    "./rate-limit": "./src/rate-limit.ts",
+    "./checkout-quote": "./src/checkout-quote.ts"
   }
 }

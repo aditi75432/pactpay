@@ -8,6 +8,7 @@ import {
 } from "@pactpay/pact-core/settlement-demo";
 import type { PurchasePact } from "@pactpay/pact-core";
 import { getProtectedDemoContext, getTransactionById, isUuid, updateProtectedDemoScenario } from "../../../../../../../../lib/db";
+import { enforceRateLimit } from "../../../../../../lib/request-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +18,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function POST(request: Request, context: { params: Promise<{ transactionId: string }> }) {
+  const rateLimited = enforceRateLimit(request, "scenario", 30, 10 * 60_000);
+  if (rateLimited) return rateLimited;
   try {
     const { transactionId } = await context.params;
     if (!isUuid(transactionId)) return NextResponse.json({ error: "Invalid transaction ID." }, { status: 400 });

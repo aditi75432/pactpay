@@ -11,6 +11,7 @@ import {
   storeChannel3RefreshCheck,
   type Channel3OfferSnapshotInput,
 } from "../../../../../../lib/db";
+import { enforceRateLimit } from "../../../../lib/request-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function POST(request: Request) {
+  const rateLimited = enforceRateLimit(request, "discovery-refresh", 60, 10 * 60_000);
+  if (rateLimited) return rateLimited;
   let body: unknown;
   try {
     body = await request.json();
