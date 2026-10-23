@@ -23,6 +23,7 @@
     "./rate-limit": "./src/rate-limit.ts",
     "./checkout-quote": "./src/checkout-quote.ts",
     "./autonomy": "./src/autonomy.ts",
-    "./untrusted-text": "./src/untrusted-text.ts"
+    "./untrusted-text": "./src/untrusted-text.ts",
+    "./seller-world": "./src/seller-world.ts"
   }
 }

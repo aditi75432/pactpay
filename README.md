@@ -38,6 +38,10 @@ The server enforces the mode. An agent-triggered settlement is refused unless th
 
 PayPal Sandbox still asks the buyer to approve each new hold. A saved payment method would remove that last tap. It isn't built here.
 
+### Recovery that holds up
+
+If a hold fails its check (say the seller sells out), the agent does not simply search again and pick the same offer. Offers have a stable identity, the simulated seller change stays in effect for the session, and the server refuses to open a second hold on that offer. The agent must choose a genuinely different, compliant offer, or stop. The result page shows every attempt side by side: each authorization, what was captured (nothing, for the failed one), and why.
+
 ### The seller-text reader (second use of AI)
 
 Seller listings are untrusted text. For the best match, an AI model reads the listing and returns the facts it states (return window, battery life, condition and so on), each with the exact words that support it. The server rejects any fact whose quote isn't literally in the text, any unknown field, any out-of-range number, and any fact that reads like an instruction. What survives is labelled **Seller-stated, not verified** and never changes a payment decision. A "live security test" button adds a hostile instruction to the real listing so you can watch the scanner flag it and the facts stay the same.
@@ -104,7 +108,7 @@ Agent payment standards such as Google's AP2 (signed Intent and Cart mandates) a
 apps/web         Next.js app: shopper flow, order screen, Activity (AG Grid), API routes
 packages/pact-core   Pure TypeScript: policy engine, settlement state machine, audit chain,
                      explanations, autonomy policy, untrusted-text guard,
-                     rate limiter, test fixtures (112 tests)
+                     rate limiter, seller simulation, test fixtures (119 tests)
 lib              Server modules: PostgreSQL, PayPal, Channel3, pact approvals, audit chain
 docs             Architecture, threat model, judge guide, demo script, changelog
 ```

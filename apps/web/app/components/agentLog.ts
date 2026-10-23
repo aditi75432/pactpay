@@ -7,6 +7,7 @@ export type LogEntry = { t: number; who: LogWho; text: string; key?: string };
 const LOG_KEY = "pactpay.agentLog.v1";
 export const AUTONOMY_KEY = "pactpay.activeAutonomy.v1";
 const EXCLUDED_KEY = "pactpay.excluded.v1";
+const ATTEMPTS_KEY = "pactpay.attempts.v1";
 
 function read<T>(key: string, fallback: T): T {
   try {
@@ -33,6 +34,19 @@ export function logEvent(who: LogWho, text: string, key?: string) {
 export function resetRun() {
   write(LOG_KEY, []);
   write(EXCLUDED_KEY, []);
+  write(ATTEMPTS_KEY, []);
+}
+
+/** One payment hold in this run. A run can have several if the agent has to move to another offer. */
+export type Attempt = { txId: string; title: string; merchant: string; key: string | null; t: number };
+export function readAttempts(): Attempt[] {
+  const items = read<unknown>(ATTEMPTS_KEY, []);
+  return Array.isArray(items) ? items.filter((item): item is Attempt => typeof item === "object" && item !== null && typeof (item as Attempt).txId === "string") : [];
+}
+export function registerAttempt(attempt: Omit<Attempt, "t">) {
+  const items = readAttempts();
+  if (items.some((item) => item.txId === attempt.txId)) return;
+  write(ATTEMPTS_KEY, [...items, { ...attempt, t: Date.now() }].slice(-12));
 }
 
 export function readAutonomy(): { autonomy: Autonomy; acknowledgedTest: boolean } {

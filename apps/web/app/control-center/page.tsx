@@ -21,6 +21,14 @@ type TransactionRow = {
   pact_hash: string | null;
   capture_origin: string | null;
   autonomy_label?: string | null;
+  attempt_no?: number;
+  offer_title?: string | null;
+  offer_domain?: string | null;
+  injected_change?: string | null;
+  failed_rules?: string | null;
+  evidence_state?: string;
+  captured_amount?: string;
+  outcome?: string;
   created_at: string;
   authorized_at: string | null;
   captured_at: string | null;
@@ -91,6 +99,44 @@ function json(value: unknown): string {
 
 const baseColDef: ColDef = { sortable: true, filter: true, resizable: true, minWidth: 115, flex: 1, suppressMovable: false };
 
+type LineageEvent = { id: string; type: string; actor: string; at: string; hash: string; details: Array<[string, string]> };
+
+/** The hash-chained event history of one transaction, loaded when a row is opened. */
+function Lineage({ transactionId }: { transactionId: string }) {
+  const [events, setEvents] = useState<LineageEvent[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setEvents(null); setFailed(false);
+    void fetch(`/api/control-center/lineage/${encodeURIComponent(transactionId)}`, { cache: "no-store" })
+      .then((response) => response.ok ? response.json() as Promise<{ events: LineageEvent[] }> : Promise.reject(new Error("unavailable")))
+      .then((payload) => { if (!cancelled) setEvents(payload.events); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [transactionId]);
+  return (
+    <div style={{ marginTop: 18 }}>
+      <p style={{ margin: "0 0 8px", color: "#a5b8b0", fontSize: 13 }}>Event lineage · each event is hash-chained to the one before it</p>
+      {failed && <p style={{ color: "#ffb8b8", fontSize: 13 }}>The event history isn't available for this row.</p>}
+      {!failed && events === null && <p style={{ color: "#7c9387", fontSize: 13 }}>Loading events…</p>}
+      {events && events.length === 0 && <p style={{ color: "#7c9387", fontSize: 13 }}>No events recorded.</p>}
+      {events && events.length > 0 && (
+        <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
+          {events.map((event) => (
+            <li key={event.id} style={{ padding: "10px 12px", border: "1px solid #28443a", borderRadius: 10, background: "#091512" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <strong style={{ color: "#edf7f2", fontSize: 13 }}>{event.type.replace(/_/g, " ")}</strong>
+                <span style={{ color: "#7c9387", fontSize: 12 }}>{dateTime(event.at)} · {event.actor} · #{event.hash}</span>
+              </div>
+              {event.details.length > 0 && <div style={{ marginTop: 6, color: "#a5b8b0", fontSize: 12, lineHeight: 1.6, overflowWrap: "anywhere" }}>{event.details.map(([key, value]) => `${key}: ${value}`).join(" · ")}</div>}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 export default function ControlCenterPage() {
   const [data, setData] = useState<ControlCenterPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -119,7 +165,14 @@ export default function ControlCenterPage() {
   useEffect(() => { void load(); }, [load]);
 
   const transactionColumns = useMemo<ColDef<TransactionRow>[]>(() => [
+    { field: "attempt_no", headerName: "Attempt", minWidth: 100, maxWidth: 110, valueFormatter: (p) => (p.value ? `#${p.value}` : "—") },
+    { headerName: "Offer", minWidth: 250, valueGetter: (p) => (p.data?.offer_title ? `${p.data.offer_title} · ${p.data.offer_domain ?? ""}` : "—"), tooltipValueGetter: (p) => p.data?.offer_title ?? "" },
     { field: "transaction_id", headerName: "Transaction", minWidth: 165, valueFormatter: (p) => compactId(p.value) },
+    { field: "outcome", headerName: "Outcome", minWidth: 220, cellStyle: (p) => ({ fontWeight: 800, color: String(p.value ?? "").startsWith("Captured") ? "#7fe2ab" : String(p.value ?? "").startsWith("Voided") ? "#ff9d8a" : String(p.value ?? "").startsWith("Needs") ? "#ffd28a" : "#bfe9d3" }) },
+    { field: "captured_amount", headerName: "Captured", minWidth: 120, valueFormatter: (p) => `$${p.value ?? "0.00"}` },
+    { field: "failed_rules", headerName: "Failed rules", minWidth: 280, valueFormatter: (p) => p.value ?? "—", tooltipField: "failed_rules", cellStyle: (p) => ({ color: p.value ? "#ff9d8a" : "#8aa99b" }) },
+    { field: "evidence_state", headerName: "Evidence", minWidth: 160, cellStyle: (p) => ({ fontWeight: 700, color: p.value === "FRESH" ? "#7fe2ab" : p.value === "NOT CHECKED" ? "#8aa99b" : "#ffd28a" }) },
+    { field: "injected_change", headerName: "Injected change", minWidth: 180, valueFormatter: (p) => p.value ?? "none", cellStyle: (p) => ({ color: p.value ? "#ffd28a" : "#8aa99b" }) },
     { field: "status", headerName: "Settlement", minWidth: 145, cellStyle: (p) => ({ fontWeight: 800, color: p.value === "CAPTURED" ? "#7fe2ab" : p.value === "VOIDED" || p.value === "POLICY_BLOCKED" ? "#ffb8b8" : p.value === "CAPTURE_REVIEW" || p.value === "VOID_REVIEW" || p.value === "AUTHORIZATION_REVIEW" ? "#ffd891" : "#edf7f2" }) },
     { field: "amount", headerName: "Amount", minWidth: 125, valueFormatter: (p) => `${p.data?.currency ?? ""} ${p.value ?? "—"}`.trim() },
     { field: "authorization_status", headerName: "Authorization", minWidth: 135 },
@@ -141,7 +194,16 @@ export default function ControlCenterPage() {
     { field: "created_at", headerName: "Evaluated", minWidth: 180, valueFormatter: (p) => dateTime(p.value) },
   ], []);
 
-  const transactions = data?.transactions ?? [];
+  const allTransactions = data?.transactions ?? [];
+  const [preset, setPreset] = useState<"all" | "captured" | "blocked" | "evidence" | "review" | "agent">("all");
+  const matchesPreset = (tx: TransactionRow, which: typeof preset) =>
+    which === "all" ? true
+    : which === "captured" ? tx.status === "CAPTURED"
+    : which === "blocked" ? ["VOIDED", "VOIDING", "POLICY_BLOCKED"].includes(tx.status)
+    : which === "evidence" ? (tx.evidence_state !== undefined && tx.evidence_state !== "FRESH")
+    : which === "review" ? ["CAPTURE_REVIEW", "VOID_REVIEW", "AUTHORIZATION_REVIEW", "FAILED"].includes(tx.status)
+    : Boolean(tx.autonomy_label && tx.autonomy_label !== "Ask me every time");
+  const transactions = allTransactions.filter((tx) => matchesPreset(tx, preset));
   const policyRuns = data?.policyRuns ?? [];
   const capturedCount = transactions.filter((tx) => tx.status === "CAPTURED" && tx.capture_status === "COMPLETED").length;
   const blockedCount = policyRuns.filter((run) => run.decision === "block").length;
@@ -197,6 +259,15 @@ export default function ControlCenterPage() {
         </section>
 
         <section style={{ border: "1px solid #28443a", background: "#0e1c19", borderRadius: 17, padding: 16, marginBottom: 18 }}>
+          {tab === "transactions" && (
+            <div role="group" aria-label="Quick filters" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+              {([["all", "All attempts"], ["captured", "Captured"], ["blocked", "Voided · nothing captured"], ["evidence", "Stale or unchecked evidence"], ["review", "Needs review"], ["agent", "Run by the agent"]] as const).map(([key, label]) => (
+                <button key={key} type="button" aria-pressed={preset === key} onClick={() => setPreset(key)} style={{ border: "1px solid #42664c", borderRadius: 999, padding: "8px 14px", background: preset === key ? "#1e5a3f" : "transparent", color: "#edf7f2", fontWeight: 800, cursor: "pointer", fontSize: 14 }}>
+                  {label} <span style={{ opacity: .75 }}>{allTransactions.filter((tx) => matchesPreset(tx, key)).length}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", marginBottom: 15 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <button type="button" onClick={() => { setTab("transactions"); setSelected(null); }} style={{ border: "1px solid #42664c", background: tab === "transactions" ? "#173b2b" : "transparent", color: tab === "transactions" ? "#7fe2ab" : "#a5b8b0", borderRadius: 9, padding: "10px 13px", fontWeight: 850, cursor: "pointer" }}>Transactions ({transactions.length})</button>
@@ -262,6 +333,8 @@ export default function ControlCenterPage() {
                 ["Captured at", dateTime(selected.row.captured_at)], ["Voided at", dateTime(selected.row.voided_at)],
               ].map(([label, value]) => <div key={label} style={{ padding: 12, border: "1px solid #28443a", borderRadius: 10, background: "#091512", minWidth: 0 }}><div style={{ color: "#7c9387", fontSize: 11, marginBottom: 6 }}>{label}</div><div style={{ fontSize: 13, fontWeight: 750, overflowWrap: "anywhere" }}>{value}</div></div>)}
             </div>
+            {selected.row.failed_rules && <p style={{ color: "#ff9d8a", fontSize: 14, lineHeight: 1.6, marginTop: 14 }}>Failed rules: {selected.row.failed_rules}</p>}
+            <Lineage transactionId={selected.row.transaction_id} />
             {selected.row.last_error_message && <p style={{ color: "#ffb8b8", fontSize: 13, lineHeight: 1.6 }}>Last error: {selected.row.last_error_message}</p>}
             <a href={`/protected-demo?transactionId=${encodeURIComponent(selected.row.transaction_id)}`} style={{ display: "inline-block", marginTop: 15, color: "#7fe2ab", fontWeight: 850 }}>Open transaction timeline ↗</a>
           </> : <>

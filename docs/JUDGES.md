@@ -20,7 +20,10 @@ On the first screen keep **Ask me above a limit** selected (the default is $50).
 2. Approve the hold on PayPal (the only tap PayPal Sandbox requires).
 3. On the order screen a 12-second countdown shows the agent will re-check the live offer and settle by itself. While it counts down, use **Demo control** to make the seller raise the price.
 4. The agent blocks it, cancels the hold, skips that offer and starts looking for the next one.
-5. **What your agent did** lists every step and how many were yours.
+5. **Attempts in this run** shows both holds side by side: the first voided with $0 captured and why, the second a different offer verified on its own. **What your agent did** lists every step and how many were yours.
+6. Open the **Decision receipt** for PASS / FAIL / UNKNOWN per rule, with the evidence source and times. Open **Activity** (AG Grid), filter by "Voided · nothing captured", and open a row for its event lineage.
+
+If you repeat the demo with the same product, use **Reset the simulation and search again** on the shortlist first.
 
 To see the limit work, choose **Ask me every time** and notice the agent waits for you.
 

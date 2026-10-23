@@ -6,6 +6,7 @@ import { previewChannel3TestQuote } from "@pactpay/pact-core/settlement-demo";
 import { applyCheckoutQuote } from "@pactpay/pact-core/checkout-quote";
 import { describeAutonomy, shouldAutoHold, type Autonomy } from "@pactpay/pact-core/autonomy";
 import { logEvent, readAutonomy, readExcluded } from "../components/agentLog";
+import { offerKey } from "@pactpay/pact-core/seller-world";
 import AppShell from "../components/AppShell";
 import StepTracker from "../components/StepTracker";
 
@@ -312,6 +313,27 @@ export default function ShoppingAgentPage() {
   const [excluded, setExcluded] = useState<string[]>([]);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [autopilotStopped, setAutopilotStopped] = useState(false);
+  const [world, setWorld] = useState<Array<{ offerKey: string; scenarioId: string; reason: string | null }>>([]);
+
+  async function loadWorld() {
+    try {
+      const response = await fetch("/api/seller-world", { cache: "no-store" });
+      const payload = await response.json() as { effects?: Array<{ offerKey: string; scenarioId: string; reason: string | null }> };
+      setWorld(Array.isArray(payload.effects) ? payload.effects : []);
+    } catch { /* the simulation layer is optional */ }
+  }
+  useEffect(() => { void loadWorld(); }, []);
+
+  async function resetSimulation() {
+    try { await fetch("/api/seller-world", { method: "DELETE" }); } catch { /* ignore */ }
+    try { window.sessionStorage.setItem("pactpay.excluded.v1", "[]"); } catch { /* ignore */ }
+    setExcluded([]);
+    setWorld([]);
+    logEvent("you", "Reset the seller simulation so every offer shows its real catalog state again.");
+    autoStarted.current = true;
+    setAutopilotStopped(false);
+    void runAgent();
+  }
 
   useEffect(() => {
     const stored = readAutonomy();
@@ -359,7 +381,11 @@ export default function ShoppingAgentPage() {
     }
   }
 
-  const ready = candidates.filter((item) => item.refreshed && item.verdict === "PASS" && !excluded.includes(item.offer.snapshotId)).sort((a, b) => b.relevance - a.relevance || a.evaluation.summary.softFailures - b.evaluation.summary.softFailures || a.offer.price - b.offer.price);
+  const keyOf = (offer: LiveOffer) => offerKey(offer.productId, offer.offerDomain);
+  const worldReasonFor = (item: Candidate): string | null => world.find((effect) => effect.offerKey === keyOf(item.offer))?.reason ?? null;
+  const isBlocked = (item: Candidate) => excluded.includes(keyOf(item.offer)) || worldReasonFor(item) !== null;
+  const blockedText = (item: Candidate) => worldReasonFor(item) ?? "Skipped: this exact offer already failed its check earlier in this run, so the agent won't pick it again.";
+  const ready = candidates.filter((item) => item.refreshed && item.verdict === "PASS" && !isBlocked(item)).sort((a, b) => b.relevance - a.relevance || a.evaluation.summary.softFailures - b.evaluation.summary.softFailures || a.offer.price - b.offer.price);
   const best = ready[0] ?? null;
   const others = candidates.filter((item) => item.offer.snapshotId !== best?.offer.snapshotId);
   const intentTitle = intent || query;
@@ -368,7 +394,7 @@ export default function ShoppingAgentPage() {
   const autoEligible = Boolean(best && bestQuote && best.offer.currency === "USD" && testAcknowledged && shouldAutoHold(autonomy, bestQuote.total));
   const waitingForYou = Boolean(best && bestQuote && autonomy.mode !== "ASK_ALWAYS" && !autoEligible);
   const bestId = best?.offer.snapshotId ?? null;
-  const skippedCount = candidates.filter((item) => excluded.includes(item.offer.snapshotId)).length;
+  const skippedCount = candidates.filter((item) => isBlocked(item)).length;
 
   useEffect(() => {
     if (!finished) return;
@@ -459,6 +485,14 @@ export default function ShoppingAgentPage() {
 
         {error && pact && <div className="pp-callout pp-callout-bad" role="alert">{error} <button type="button" className="pp-link-btn" onClick={() => { autoStarted.current = true; void runAgent(); }}>Try again</button></div>}
 
+        {(world.length > 0 || excluded.length > 0) && finished && (
+          <div className="pp-callout pp-callout-warn" role="status">
+            <p style={{ fontWeight: 700 }}>The seller simulation is still in effect</p>
+            <p className="pp-small" style={{ marginTop: 4 }}>{skippedCount} offer{skippedCount === 1 ? " is" : "s are"} being held in a changed state or already failed a check in this run. The agent will not pick {skippedCount === 1 ? "it" : "them"} again; it must choose a genuinely different offer, or stop.</p>
+            <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" style={{ marginTop: 10 }} onClick={resetSimulation}>Reset the simulation and search again</button>
+          </div>
+        )}
+
         {finished && !best && (
           <div className="pp-callout pp-callout-warn" role="status">
             <p style={{ fontWeight: 700 }}>None of these offers can be chosen yet.</p>
@@ -530,7 +564,7 @@ export default function ShoppingAgentPage() {
             {(showOthers || !best) && (
               <div className="pp-stack" style={{ marginTop: 14 }}>
                 {others.map((item) => {
-                  const canChoose = item.refreshed && item.verdict === "PASS" && !excluded.includes(item.offer.snapshotId);
+                  const canChoose = item.refreshed && item.verdict === "PASS" && !isBlocked(item);
                   return (
                     <article className="pp-card-flat pp-offer" key={item.offer.snapshotId}>
                       <OfferImage offer={item.offer} />
@@ -540,7 +574,7 @@ export default function ShoppingAgentPage() {
                           {verdictBadge(item)}
                         </div>
                         <p className="pp-small pp-muted">{item.offer.offerDomain} · <span className="pp-num">{money(item.offer.price, item.offer.currency)}</span></p>
-                        <p className="pp-small" style={{ marginTop: 6 }}>{excluded.includes(item.offer.snapshotId) ? "Skipped: this offer was blocked on an earlier try, so the agent moved on." : item.reason}</p>
+                        <p className="pp-small" style={{ marginTop: 6 }}>{isBlocked(item) ? blockedText(item) : item.reason}</p>
                         {canChoose && selected?.offer.snapshotId !== item.offer.snapshotId && <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" style={{ marginTop: 10 }} onClick={() => { setSelected(item); setAcknowledged(false); setHoldError(null); }}>Choose this one</button>}
                         {canChoose && selected?.offer.snapshotId === item.offer.snapshotId && <HoldPanel candidate={item} acknowledged={acknowledged} setAcknowledged={setAcknowledged} holding={holding} onHold={() => holdPayment(item)} onCancel={() => setSelected(null)} error={holdError} />}
                       </div>

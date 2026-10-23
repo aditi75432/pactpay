@@ -9,6 +9,9 @@ import {
 import type { PurchasePact } from "@pactpay/pact-core";
 import { getProtectedDemoContext, getTransactionById, isUuid, updateProtectedDemoScenario } from "../../../../../../../../lib/db";
 import { enforceRateLimit } from "../../../../../../lib/request-guard";
+import { readSessionId } from "../../../../../../lib/session";
+import { recordSellerWorldEffect } from "../../../../../../../../lib/seller-world";
+import { offerKey } from "@pactpay/pact-core/seller-world";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,6 +57,14 @@ export async function POST(request: Request, context: { params: Promise<{ transa
       currentOffer: mutation.offer as unknown as Record<string, unknown>,
       securityFinding: mutation.securityFinding,
     });
+    // Keep the change in effect after this attempt, so a retry can't simply meet the unchanged catalog and
+    // buy the same offer again. Only Channel3-bound offers have a stable identity to remember.
+    const sessionId = await readSessionId();
+    const productId = baselineOffer.sourceProductId;
+    const domain = baselineOffer.sourceDomain;
+    if (sessionId && typeof productId === "string" && typeof domain === "string") {
+      await recordSellerWorldEffect(sessionId, offerKey(productId, domain), scenarioId);
+    }
     return NextResponse.json({
       transactionId,
       revision: updated.revision,

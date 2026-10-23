@@ -160,8 +160,8 @@ export function explainSettlement(input: ExplainInput): Explanation {
   if (input.outcome === "CAPTURED") {
     return {
       tone: "good",
-      headline: "Checks passed. Payment released.",
-      summary: `The offer from ${input.merchant} still matched everything you approved, so PactPay released ${money(input.authorizedAmount)}. This was PayPal Sandbox test money, and no retailer order was placed.`,
+      headline: "Checks passed. Sandbox payment captured.",
+      summary: `The offer from ${input.merchant} still matched everything you approved, so PactPay captured ${money(input.authorizedAmount)} from the PayPal Sandbox authorization. This is test money. No order was placed with ${input.merchant}.`,
       reasons: [],
       changes,
       counterfactual: null,
@@ -171,8 +171,8 @@ export function explainSettlement(input: ExplainInput): Explanation {
   if (input.outcome === "VOIDED") {
     const lead = changes[0];
     const summary = lead
-      ? `${input.merchant} changed this offer after you approved it (${lead.label.toLowerCase()}: ${lead.before} to ${lead.after}). PactPay cancelled the PayPal hold, so you were not charged.`
-      : `The offer from ${input.merchant} no longer met your rules. PactPay cancelled the PayPal hold, so you were not charged.`;
+      ? `${input.merchant} changed this offer after you approved it (${lead.label.toLowerCase()}: ${lead.before} to ${lead.after}). PactPay voided the PayPal authorization, so nothing was captured and you were not charged.`
+      : `The offer from ${input.merchant} no longer met your rules. PactPay voided the PayPal authorization, so nothing was captured and you were not charged.`;
     return {
       tone: "bad",
       headline: "Blocked. You were not charged.",

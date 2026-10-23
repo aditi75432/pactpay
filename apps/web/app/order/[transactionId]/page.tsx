@@ -8,7 +8,8 @@ import AppShell from "../../components/AppShell";
 import StepTracker from "../../components/StepTracker";
 import { money, shortId } from "../../components/format";
 import { decideSettlement, describeAutonomy, DEFAULT_AUTONOMY, type Autonomy } from "@pactpay/pact-core/autonomy";
-import { addExcluded, logEvent, readAutonomy, readLog } from "../../components/agentLog";
+import { addExcluded, logEvent, readAttempts, readAutonomy, readLog, registerAttempt } from "../../components/agentLog";
+import { offerKey } from "@pactpay/pact-core/seller-world";
 
 type Tx = {
   transactionId: string; status: string; amount: string; currency: string;
@@ -18,6 +19,8 @@ type Tx = {
 };
 type OfferLike = {
   currency?: string; total?: number | null; attributes?: Record<string, unknown>;
+  sourceProductId?: string; sourceFetchedAt?: string;
+  evidence?: Array<{ id: string; source: string; sourceType: string; collectedAt: string; validUntil: string; claim: string; value: string | number | boolean }>;
   sourceTitle?: string; sourceImageUrl?: string | null; sourceDomain?: string; sourceBrand?: string | null; sourceOfferUrl?: string;
   sandboxQuote?: { itemPrice: number; total: number; currency: string };
   scenarioApplied?: { id: string; note: string };
@@ -25,7 +28,7 @@ type OfferLike = {
 type Context = {
   pact: PurchasePact; pactHash: string; baselineOffer: OfferLike; currentOffer: OfferLike; scenarioId: string;
   securityFinding: string | null; gateReasons?: string[]; gateHash: string | null;
-  gateVerification: { results?: ConstraintResult[] } | null;
+  gateVerification: { results?: ConstraintResult[]; evidenceFresh?: boolean; evidenceAttributable?: boolean; securityClear?: boolean } | null;
 };
 type Loaded = { transaction: Tx; purchaseContext: Context; auditIntegrity: { valid: boolean; eventCount: number } };
 type Live = {
@@ -139,6 +142,24 @@ export default function OrderPage() {
   const [retryCount, setRetryCount] = useState<number | null>(null);
   useEffect(() => { setAutonomy(readAutonomy().autonomy); }, []);
 
+  const baseOfferNow = data?.purchaseContext.baselineOffer;
+  const offerKeyNow = baseOfferNow?.sourceProductId && baseOfferNow?.sourceDomain ? offerKey(baseOfferNow.sourceProductId, baseOfferNow.sourceDomain) : null;
+  useEffect(() => {
+    if (!data) return;
+    registerAttempt({ txId: data.transaction.transactionId, title: data.purchaseContext.baselineOffer.sourceTitle ?? "Your item", merchant: data.purchaseContext.baselineOffer.sourceDomain ?? "the seller", key: offerKeyNow });
+  }, [data, offerKeyNow]);
+
+  async function loadLiveSilently() {
+    try {
+      const response = await fetch(`/api/paypal/transactions/${encodeURIComponent(transactionId)}/refresh-state`, { cache: "no-store" });
+      if (response.ok) setLive(await response.json() as Live);
+    } catch { /* PayPal confirmation is a bonus; the button below still works */ }
+  }
+  useEffect(() => {
+    if (status === "CAPTURED" || status === "VOIDED") void loadLiveSilently();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
   const heldNow = status === "AUTHORIZED";
   const amountNow = Number(data?.transaction.amount ?? 0);
   const agentDecision = decideSettlement(autonomy, amountNow, "agent");
@@ -166,7 +187,7 @@ export default function OrderPage() {
   const snapshotIdNow = data?.transaction.offerSnapshotId ?? null;
   useEffect(() => {
     if (status !== "VOIDED") return;
-    addExcluded(snapshotIdNow);
+    addExcluded(offerKeyNow);
     if (autonomy.mode !== "ASK_ALWAYS" && !autoPaused) setRetryCount(AUTO_RETRY_SECONDS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
@@ -266,7 +287,7 @@ export default function OrderPage() {
     { title: "Offer chosen", detail: `${title} from ${merchant}`, state: "done" },
     { title: "Payment held on PayPal", detail: `${money(Number(tx.amount), currency)} held, not charged`, state: working && !finished && !held ? "active" : "done" },
     { title: "Seller's offer re-checked", detail: finished ? "PactPay compared the current offer with your rules" : "Happens right before anything is released", state: finished ? "done" : held || working ? "active" : "todo" },
-    { title: blocked ? "Hold cancelled" : outcome === "CAPTURED" ? "Payment released" : "Result", detail: blocked ? "You were not charged" : outcome === "CAPTURED" ? "Test money released to the seller" : "Waiting for the check", state: blocked ? "bad" : outcome === "CAPTURED" ? "done" : "todo" },
+    { title: blocked ? "Authorization voided" : outcome === "CAPTURED" ? "Sandbox payment captured" : "Result", detail: blocked ? "Nothing captured. You were not charged." : outcome === "CAPTURED" ? "Test funds captured on PayPal Sandbox. No retailer order was placed." : "Waiting for the check", state: blocked ? "bad" : outcome === "CAPTURED" ? "done" : "todo" },
   ];
 
   return (
@@ -339,6 +360,16 @@ export default function OrderPage() {
               )}
             </div>
           )}
+          {finished && (
+            <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid rgba(20,32,26,.12)" }} className="pp-small">
+              <p><strong>PayPal confirms:</strong>{" "}
+                {live
+                  ? <>authorization <strong>{live.paypal.authorization?.status ?? "none"}</strong>, captured <strong className="pp-num">{live.paypal.capture ? money(Number(live.paypal.capture.amount ?? 0), live.paypal.capture.currency ?? currency) : money(0, currency)}</strong>.</>
+                  : <span className="pp-muted">checking with PayPal…</span>}
+              </p>
+              <p style={{ marginTop: 6 }}>No retailer order was placed. This is a PayPal Sandbox payment, and any seller change was simulated with Demo control.</p>
+            </div>
+          )}
         </section>
 
         {held && autonomy.mode !== "ASK_ALWAYS" && (
@@ -406,6 +437,36 @@ export default function OrderPage() {
           </section>
         )}
 
+        {(changed || finished) && (
+          <section className="pp-card" aria-labelledby="layers-title">
+            <h2 className="pp-h3" id="layers-title">Source, test change, decision</h2>
+            <p className="pp-small pp-muted" style={{ margin: "4px 0 14px" }}>Three different things, kept apart so you can see what is real.</p>
+            <div className="pp-layers">
+              <div className="pp-layer">
+                <span className="pp-badge pp-badge-info">Real data</span>
+                <p style={{ fontWeight: 700, marginTop: 8 }}>Live catalog offer</p>
+                <p className="pp-small">{title} from {merchant}</p>
+                <p className="pp-small pp-muted pp-num">Item {money(baseline.itemPrice, baseline.currency)} · {(baseline.availability ?? "availability unknown").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase()}</p>
+                {ctx.baselineOffer.sourceFetchedAt && <p className="pp-tiny pp-muted">Observed {new Date(ctx.baselineOffer.sourceFetchedAt).toLocaleTimeString()}</p>}
+              </div>
+              <div className="pp-layer" data-kind="test">
+                <span className="pp-badge pp-badge-warn">{changed ? "Injected by Demo control" : "No test change"}</span>
+                <p style={{ fontWeight: 700, marginTop: 8 }}>{changed ? SCENARIOS.find((item) => item.id === ctx.scenarioId)?.title ?? ctx.scenarioId : "Nothing changed"}</p>
+                <p className="pp-small">{changed ? ctx.currentOffer.scenarioApplied?.note ?? "A simulated seller change was applied." : "The seller's offer is exactly as you approved it."}</p>
+                {changed && <p className="pp-tiny pp-muted">The real catalog entry was not modified. The simulation stays in effect for this offer until you reset it.</p>}
+              </div>
+              <div className="pp-layer">
+                <span className={`pp-badge ${blocked ? "pp-badge-bad" : outcome === "CAPTURED" ? "pp-badge-good" : "pp-badge-neutral"}`}>PactPay decision</span>
+                <p style={{ fontWeight: 700, marginTop: 8 }}>{finished ? (blocked ? "Blocked" : "Allowed") : "Not decided yet"}</p>
+                <p className="pp-small">{finished ? explanation.headline : "PactPay decides when it re-checks the offer."}</p>
+                <p className="pp-tiny pp-muted">Decided by fixed rules, not by AI.</p>
+              </div>
+            </div>
+          </section>
+        )}
+
+        <AttemptsPanel currentId={tx.transactionId} currentStatus={tx.status} />
+
         <section className="pp-card" aria-labelledby="timeline-title">
           <h2 className="pp-h3" id="timeline-title" style={{ marginBottom: 16 }}>What happened</h2>
           <div className="pp-timeline">
@@ -442,6 +503,8 @@ export default function OrderPage() {
           );
         })()}
 
+        <DecisionReceipt ctx={ctx} currency={currency} finished={finished} blocked={blocked} />
+
         <details className="pp-card-flat">
           <summary style={{ cursor: "pointer", fontWeight: 700 }}>Receipt and proof</summary>
           <div style={{ marginTop: 14 }} className="pp-stack">
@@ -473,5 +536,132 @@ export default function OrderPage() {
         </details>
       </div>
     </AppShell>
+  );
+}
+
+
+const SYSTEM_LABELS: Record<string, string> = {
+  "system.authorized_amount_match": "The held amount equals the verified total",
+  "system.currency_match": "The held currency equals the offer currency",
+  "system.authorization_binding": "The PayPal hold belongs to this order",
+};
+const SOURCE_LABEL: Record<string, string> = { channel3: "Live catalog (Channel3)", simulator: "Demo control (simulated)", paypal: "PayPal", merchant: "Seller", user: "You" };
+
+function formatObserved(value: unknown, field: string | undefined, currency: string): string {
+  if (value === undefined || value === null) return "—";
+  if (typeof value === "number") return field === "attributes.itemPrice" || field === "total" || field?.startsWith("system.") ? money(value, currency) : String(value);
+  return String(value).replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
+/** One row per rule: what you approved, what was observed, where it came from, and PASS / FAIL / UNKNOWN. */
+function DecisionReceipt({ ctx, currency, finished, blocked }: { ctx: Context; currency: string; finished: boolean; blocked: boolean }) {
+  const results = ctx.gateVerification?.results ?? [];
+  const evidence = ctx.currentOffer.evidence ?? [];
+  if (!finished || results.length === 0) return null;
+  const rows = results.map((result) => {
+    const rule = ctx.pact.constraints.find((constraint) => constraint.id === result.constraintId);
+    const label = rule?.description ?? SYSTEM_LABELS[result.constraintId] ?? `PactPay check: ${result.constraintId.replace(/^system\./, "").replace(/[._]/g, " ")}`;
+    const support = (result.evidenceIds ?? []).map((id) => evidence.find((item) => item.id === id)).find(Boolean);
+    const outcome = result.status === "pass" ? "PASS" : result.status === "fail" ? "FAIL" : "UNKNOWN";
+    return { id: result.constraintId, label, soft: (result.severity ?? "hard") === "soft", outcome, observed: formatObserved(result.actual, rule?.field ?? result.constraintId, currency), support, system: result.constraintId.startsWith("system.") };
+  });
+  const hard = rows.filter((row) => !row.soft);
+  const counts = { PASS: hard.filter((row) => row.outcome === "PASS").length, FAIL: hard.filter((row) => row.outcome === "FAIL").length, UNKNOWN: hard.filter((row) => row.outcome === "UNKNOWN").length };
+  return (
+    <details className="pp-card-flat" open={blocked}>
+      <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+        Decision receipt <span className="pp-small pp-muted" style={{ fontWeight: 500 }}>· {counts.PASS} pass · {counts.FAIL} fail · {counts.UNKNOWN} unknown</span>
+      </summary>
+      <div style={{ marginTop: 12, overflowX: "auto" }}>
+        <table className="pp-receipt">
+          <thead><tr><th>Rule you approved</th><th>Observed</th><th>Evidence</th><th>Result</th></tr></thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td>{row.label}{row.soft && <span className="pp-tiny pp-muted"> · nice-to-have, never blocks</span>}</td>
+                <td className="pp-num">{row.observed}</td>
+                <td className="pp-small">
+                  {row.support ? (<>
+                    {SOURCE_LABEL[row.support.sourceType] ?? row.support.sourceType}
+                    <br /><span className="pp-tiny pp-muted">collected {new Date(row.support.collectedAt).toLocaleTimeString()} · valid until {new Date(row.support.validUntil).toLocaleTimeString()}</span>
+                  </>) : <span className="pp-muted">{row.system ? "PactPay check" : "No evidence"}</span>}
+                </td>
+                <td><span className={`pp-badge ${row.outcome === "PASS" ? "pp-badge-good" : row.outcome === "FAIL" ? "pp-badge-bad" : "pp-badge-warn"}`}>{row.outcome}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="pp-small" style={{ marginTop: 12 }}>
+        Evidence fresh at decision: <strong>{ctx.gateVerification?.evidenceFresh === undefined ? "n/a" : ctx.gateVerification.evidenceFresh ? "yes" : "no"}</strong> · Evidence tied to this exact offer: <strong>{ctx.gateVerification?.evidenceAttributable === undefined ? "n/a" : ctx.gateVerification.evidenceAttributable ? "yes" : "no"}</strong> · Security check: <strong>{ctx.gateVerification?.securityClear === undefined ? "n/a" : ctx.gateVerification.securityClear ? "clear" : "held"}</strong>
+      </p>
+      <p className="pp-small" style={{ marginTop: 6 }}>Final decision: <strong>{blocked ? "BLOCK. The PayPal authorization was voided and nothing was captured." : "CAPTURE. All must-have rules passed on fresh, attributable evidence."}</strong> An unknown or stale must-have fact is treated as not met.</p>
+    </details>
+  );
+}
+
+type AttemptRow = { id: string; title: string; merchant: string; key: string | null; status: string; authorizationStatus: string | null; captureStatus: string | null; amount: string; currency: string; why: string };
+
+/** Every payment hold in this run, side by side, read live from the server. Only shown when there was more than one. */
+function AttemptsPanel({ currentId, currentStatus }: { currentId: string; currentStatus: string }) {
+  const [rows, setRows] = useState<AttemptRow[]>([]);
+  const attempts = typeof window === "undefined" ? [] : readAttempts();
+  const idsKey = attempts.map((item) => item.txId).join(",");
+
+  useEffect(() => {
+    let cancelled = false;
+    const list = readAttempts();
+    if (list.length < 2) { setRows([]); return; }
+    void Promise.all(list.map(async (attempt): Promise<AttemptRow | null> => {
+      try {
+        const response = await fetch(`/api/paypal/protected-demo/transactions/${encodeURIComponent(attempt.txId)}`, { cache: "no-store" });
+        if (!response.ok) return null;
+        const payload = await response.json() as Loaded;
+        const { transaction: t, purchaseContext: c } = payload;
+        const cur = t.currency || "USD";
+        const outcome = t.status === "CAPTURED" ? "CAPTURED" as const : ["VOIDED", "VOIDING", "POLICY_BLOCKED"].includes(t.status) ? "VOIDED" as const : "OPEN" as const;
+        const exp = explainSettlement({
+          outcome, currency: cur, authorizedAmount: Number(t.amount), merchant: c.baselineOffer.sourceDomain ?? attempt.merchant, productTitle: attempt.title,
+          baseline: factsOf(c.baselineOffer, cur), current: factsOf(c.currentOffer, cur), pact: c.pact, results: c.gateVerification?.results ?? [], securityFinding: c.securityFinding, gateReasons: c.gateReasons ?? [],
+        });
+        const why = outcome === "VOIDED" ? (exp.changes[0] ? `${exp.changes[0].label} went from ${exp.changes[0].before} to ${exp.changes[0].after}` : exp.reasons[0] ?? "No longer matched your rules") : outcome === "CAPTURED" ? "Passed every check on fresh evidence" : "Waiting for the check";
+        return { id: attempt.txId, title: attempt.title, merchant: attempt.merchant, key: attempt.key, status: t.status, authorizationStatus: t.authorizationStatus, captureStatus: t.captureStatus, amount: t.amount, currency: cur, why };
+      } catch { return null; }
+    })).then((loaded) => { if (!cancelled) setRows(loaded.filter((row): row is AttemptRow => row !== null)); });
+    return () => { cancelled = true; };
+  }, [idsKey, currentStatus]);
+
+  if (rows.length < 2) return null;
+  const last = rows[rows.length - 1];
+  const previous = rows[rows.length - 2];
+  const different = last && previous && last.key !== null && previous.key !== null && last.key !== previous.key;
+  return (
+    <section className="pp-card" aria-labelledby="attempts-title">
+      <h2 className="pp-h3" id="attempts-title">Attempts in this run</h2>
+      <p className="pp-small pp-muted" style={{ margin: "4px 0 12px" }}>Each attempt is its own PayPal authorization, verified on its own. Nothing carries over from a failed one.</p>
+      <div style={{ overflowX: "auto" }}>
+        <table className="pp-receipt">
+          <thead><tr><th>#</th><th>Offer</th><th>Authorization</th><th>Captured</th><th>Why</th></tr></thead>
+          <tbody>
+            {rows.map((row, index) => {
+              const captured = row.captureStatus === "COMPLETED" ? money(Number(row.amount), row.currency) : money(0, row.currency);
+              const auth = row.status === "VOIDED" ? "VOIDED" : row.status === "CAPTURED" ? "CAPTURED" : row.authorizationStatus ?? row.status;
+              return (
+                <tr key={row.id} style={row.id === currentId ? { background: "var(--pp-accent-soft)" } : undefined}>
+                  <td>{index + 1}</td>
+                  <td>{row.title}<br /><span className="pp-tiny pp-muted">{row.merchant}</span></td>
+                  <td><span className={`pp-badge ${auth === "VOIDED" ? "pp-badge-bad" : auth === "CAPTURED" ? "pp-badge-good" : "pp-badge-neutral"}`}>{auth}</span></td>
+                  <td className="pp-num"><strong>{captured}</strong></td>
+                  <td className="pp-small">{row.why}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="pp-small" style={{ marginTop: 12 }}>
+        {different ? `Attempt ${rows.length} used a different offer (${last?.merchant}) from attempt ${rows.length - 1} (${previous?.merchant}). It was re-checked on its own against the live catalog and its own PayPal authorization.` : `Attempt ${rows.length} used the same offer as attempt ${rows.length - 1}. Check the simulation: it should have been skipped.`}
+      </p>
+    </section>
   );
 }

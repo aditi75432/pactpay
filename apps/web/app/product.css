@@ -238,3 +238,12 @@
 .pp-report-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; padding: 9px 0; border-top: 1px solid var(--pp-line); font-size: 14.5px; }
 .pp-report-row:first-child { border-top: 0; }
 @media (max-width: 560px) { .pp-claim { grid-template-columns: 1fr; } }
+
+/* Receipts, layers, attempts */
+.pp-receipt { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+.pp-receipt th { text-align: left; font-size: 12.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--pp-muted); padding: 8px 10px; border-bottom: 1px solid var(--pp-line-strong); white-space: nowrap; }
+.pp-receipt td { padding: 10px; border-bottom: 1px solid var(--pp-line); vertical-align: top; }
+.pp-layers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.pp-layer { border: 1px solid var(--pp-line); border-radius: 14px; padding: 14px; background: var(--pp-surface-2); }
+.pp-layer[data-kind="test"] { border: 2px dashed #cdbf95; background: #fffaf0; }
+@media (max-width: 760px) { .pp-layers { grid-template-columns: 1fr; } }

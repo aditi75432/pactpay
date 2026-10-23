@@ -67,7 +67,9 @@ describe("explainSettlement", () => {
     const captured = explainSettlement({ ...base, outcome: "CAPTURED", current: base.baseline });
     expect(captured.tone).toBe("good");
     expect(captured.counterfactual).toBeNull();
-    expect(captured.summary).toMatch(/Sandbox test money/);
+    expect(captured.headline).toMatch(/Sandbox payment captured/);
+    expect(captured.summary).toMatch(/test money/);
+    expect(captured.summary).toMatch(/No order was placed/);
     const open = explainSettlement({ ...base, outcome: "OPEN", current: base.baseline });
     expect(open.tone).toBe("waiting");
     expect(open.headline).toMatch(/nothing has been charged/i);

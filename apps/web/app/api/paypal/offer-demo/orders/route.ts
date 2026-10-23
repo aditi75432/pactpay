@@ -14,6 +14,8 @@ import { sanitizePurchasePact } from "../../../../../../../lib/intent-pact";
 import { getPactApproval } from "../../../../../../../lib/pact-approvals";
 import { enforceRateLimit } from "../../../../../lib/request-guard";
 import { readSessionId } from "../../../../../lib/session";
+import { listSellerWorld } from "../../../../../../../lib/seller-world";
+import { blockedBySellerWorld, offerKey } from "@pactpay/pact-core/seller-world";
 import { createAuthorizationOrder, isPayPalSandboxConfigured } from "../../../../../../../lib/paypal";
 
 export const runtime = "nodejs";
@@ -101,6 +103,16 @@ export async function POST(request: Request) {
 
     const source = await getChannel3OfferSnapshot(body.snapshotId);
     if (!source) return NextResponse.json({ error: "This offer snapshot was not found. Run a fresh Channel3 search and select the offer again." }, { status: 404 });
+    {
+      // A seller change made with Demo control stays in effect. Never open a second hold on an offer that
+      // already failed for that reason in this session.
+      const worldSession = await readSessionId();
+      const effects = worldSession ? await listSellerWorld(worldSession) : [];
+      const blockedReason = blockedBySellerWorld(effects, offerKey(source.product_id, source.offer_domain));
+      if (blockedReason) {
+        return NextResponse.json({ error: `${blockedReason} Choose a different offer. No order was created.`, paymentAction: "NONE", sellerSimulation: true }, { status: 409 });
+      }
+    }
     const now = new Date();
     const fetchedAtMs = Date.parse(source.fetched_at);
     const validUntilMs = Date.parse(source.valid_until);
