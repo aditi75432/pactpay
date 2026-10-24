@@ -247,3 +247,8 @@
 .pp-layer { border: 1px solid var(--pp-line); border-radius: 14px; padding: 14px; background: var(--pp-surface-2); }
 .pp-layer[data-kind="test"] { border: 2px dashed #cdbf95; background: #fffaf0; }
 @media (max-width: 760px) { .pp-layers { grid-template-columns: 1fr; } }
+
+.pp-code { margin: 6px 0 8px; padding: 12px 14px; background: #10261f; color: #d6f1e2; border-radius: 12px; font-family: var(--pp-mono); font-size: 12.5px; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pp-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.pp-table th { text-align: left; font-size: 12.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--pp-muted); padding: 8px 10px; border-bottom: 1px solid var(--pp-line-strong); }
+.pp-table td { padding: 10px; border-bottom: 1px solid var(--pp-line); vertical-align: top; }

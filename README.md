@@ -38,6 +38,20 @@ The server enforces the mode. An agent-triggered settlement is refused unless th
 
 PayPal Sandbox still asks the buyer to approve each new hold. A saved payment method would remove that last tap. It isn't built here.
 
+### Any agent can use it: the agent gateway and MCP server
+
+The shopper can hand a limited key to their own AI agent. The key is tied to the rules they approved, expires in 24 hours and can be revoked. Over MCP (`node scripts/mcp-server.mjs`, no dependencies) or HTTP, the agent can read its limits, shortlist offers, ask for a PayPal hold and request settlement. It can't change the rules, raise its own autonomy, or override the settlement check. The gateway always acts as the agent, never as the user, so an agent that tries to release a payment above the shopper's limit gets a 403 from the server.
+
+```bash
+PACTPAY_AGENT_KEY=ppk_... pnpm agent:redteam      # watch a misbehaving agent get refused
+```
+
+See [`docs/AGENT-INTEGRATION.md`](docs/AGENT-INTEGRATION.md). The "For AI platforms" page in the app explains the pitch for marketplaces and assistants.
+
+### Real data
+
+The catalog and PayPal calls are real. The seller change is simulated. `pnpm drift:watch` records how often live offers really change price or stock, and `pnpm drift:report` turns that into a short report. See [`docs/REAL-DATA.md`](docs/REAL-DATA.md).
+
 ### Recovery that holds up
 
 If a hold fails its check (say the seller sells out), the agent does not simply search again and pick the same offer. Offers have a stable identity, the simulated seller change stays in effect for the session, and the server refuses to open a second hold on that offer. The agent must choose a genuinely different, compliant offer, or stop. The result page shows every attempt side by side: each authorization, what was captured (nothing, for the failed one), and why.
@@ -102,13 +116,17 @@ Without a Groq key the app still works. It uses a basic rule parser and plain te
 
 Agent payment standards such as Google's AP2 (signed Intent and Cart mandates) and research such as TessPay cover how an agent's authority is expressed and how payment is conditioned on proof. PactPay focuses on the gap after authorization and before capture: the offer can drift, and something has to check that it still matches what the user approved. It's meant to sit alongside those, not replace them.
 
+## Deploy
+
+A Render Blueprint is included (`render.yaml`). See [`docs/DEPLOY-RENDER.md`](docs/DEPLOY-RENDER.md).
+
 ## Repo map
 
 ```
 apps/web         Next.js app: shopper flow, order screen, Activity (AG Grid), API routes
 packages/pact-core   Pure TypeScript: policy engine, settlement state machine, audit chain,
                      explanations, autonomy policy, untrusted-text guard,
-                     rate limiter, seller simulation, test fixtures (119 tests)
+                     rate limiter, seller simulation, agent keys, test fixtures (127 tests)
 lib              Server modules: PostgreSQL, PayPal, Channel3, pact approvals, audit chain
 docs             Architecture, threat model, judge guide, demo script, changelog
 ```

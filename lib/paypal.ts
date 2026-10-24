@@ -111,7 +111,7 @@ export async function createAuthorizationOrder(
   requestId: string,
   options: AuthorizationOrderOptions = {},
 ): Promise<PayPalOrder> {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.RENDER_EXTERNAL_URL ?? "http://localhost:3000";
   const returnUrl = new URL("/paypal/success", appUrl);
   returnUrl.searchParams.set("transactionId", transactionId);
   if (options.flow) returnUrl.searchParams.set("flow", options.flow);

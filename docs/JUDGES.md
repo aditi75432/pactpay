@@ -27,6 +27,10 @@ If you repeat the demo with the same product, use **Reset the simulation and sea
 
 To see the limit work, choose **Ask me every time** and notice the agent waits for you.
 
+## Try it with your own agent (optional)
+
+On the shortlist screen open **Connect your own AI agent** and create a key. Then either add the shown MCP config to Claude Desktop or Cursor, or run `PACTPAY_AGENT_KEY=ppk_... pnpm agent:redteam` to watch a misbehaving agent get refused. The "For AI platforms" page explains who this is for.
+
 ## Sandbox buyer account
 
 Put your sandbox buyer login in the hackathon's private testing instructions field. Don't commit credentials to this repo.

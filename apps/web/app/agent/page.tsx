@@ -465,6 +465,8 @@ export default function ShoppingAgentPage() {
           </div>
         )}
 
+        {pact && <AgentAccess />}
+
         {pact && (searching || (steps.some((step) => step.status !== "waiting") && !finished)) && (
           <div className="pp-card" aria-live="polite">
             <div className="pp-progress">
@@ -720,5 +722,75 @@ function SellerClaims({ offer }: { offer: LiveOffer }) {
         </div>
       )}
     </div>
+  );
+}
+
+
+/** Lets the shopper hand a limited key to their own AI agent. The key is bound to the rules approved here. */
+function AgentAccess() {
+  const [approvalId, setApprovalId] = useState<string | null>(null);
+  const [key, setKey] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem("pactpay.activeApproval.v1");
+      const parsed = raw ? JSON.parse(raw) as { approvalId?: unknown } : null;
+      if (parsed && typeof parsed.approvalId === "string") setApprovalId(parsed.approvalId);
+    } catch { /* no approval stored */ }
+  }, []);
+
+  async function create() {
+    if (!approvalId || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch("/api/agent-keys", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvalId }) });
+      const payload = await response.json() as { key?: string; expiresAt?: string; error?: string };
+      if (!response.ok || !payload.key) throw new Error(payload.error ?? "Couldn't create a key.");
+      setKey(payload.key); setExpiresAt(payload.expiresAt ?? null);
+      logEvent("you", "Created a limited agent key for my own AI agent.", `key:${approvalId}`);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Couldn't create a key."); }
+    finally { setBusy(false); }
+  }
+  async function revoke() {
+    if (!approvalId) return;
+    setBusy(true);
+    try { await fetch("/api/agent-keys", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvalId }) }); setKey(null); }
+    finally { setBusy(false); }
+  }
+  async function copy(label: string, text: string) {
+    try { await navigator.clipboard.writeText(text); setCopied(label); window.setTimeout(() => setCopied(null), 1600); } catch { /* clipboard unavailable */ }
+  }
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const mcpConfig = JSON.stringify({ mcpServers: { pactpay: { command: "node", args: ["scripts/mcp-server.mjs"], env: { PACTPAY_URL: origin, PACTPAY_AGENT_KEY: key ?? "ppk_..." } } } }, null, 2);
+
+  return (
+    <details className="pp-card-flat">
+      <summary style={{ cursor: "pointer", fontWeight: 700 }}>Connect your own AI agent <span className="pp-small pp-muted" style={{ fontWeight: 500 }}>· optional</span></summary>
+      <div className="pp-stack" style={{ marginTop: 12, gap: 12 }}>
+        <p className="pp-small">Give another AI agent a key that is limited to the rules you just approved. It can shortlist offers and ask for PayPal holds. It can&apos;t change your rules, and it can&apos;t release money above the autonomy limit you chose. You still approve every hold on PayPal.</p>
+        {!key && <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" style={{ justifySelf: "start" }} onClick={create} disabled={busy || !approvalId}>{busy ? "Creating…" : "Create an agent key"}</button>}
+        {error && <p className="pp-callout pp-callout-bad" role="alert">{error}</p>}
+        {key && (
+          <>
+            <div>
+              <p className="pp-small" style={{ fontWeight: 700 }}>Your agent key <span className="pp-muted" style={{ fontWeight: 500 }}>(shown once{expiresAt ? `, expires ${new Date(expiresAt).toLocaleString()}` : ""})</span></p>
+              <pre className="pp-code">{key}</pre>
+              <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => copy("key", key)}>{copied === "key" ? "Copied" : "Copy key"}</button>
+            </div>
+            <div>
+              <p className="pp-small" style={{ fontWeight: 700 }}>MCP config (Claude Desktop, Cursor and others)</p>
+              <pre className="pp-code">{mcpConfig}</pre>
+              <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => copy("mcp", mcpConfig)}>{copied === "mcp" ? "Copied" : "Copy config"}</button>
+            </div>
+            <p className="pp-tiny pp-muted">Prove the limits: run <code>pnpm agent:redteam</code> with this key to watch a misbehaving agent get refused.</p>
+            <button type="button" className="pp-link-btn" style={{ justifySelf: "start" }} onClick={revoke} disabled={busy}>Revoke this key</button>
+          </>
+        )}
+      </div>
+    </details>
   );
 }

@@ -8,7 +8,12 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "db:up": "docker compose up -d db",
-    "db:down": "docker compose down"
+    "db:down": "docker compose down",
+    "start": "pnpm --filter web start",
+    "agent:mcp": "node scripts/mcp-server.mjs",
+    "agent:redteam": "node scripts/agent-redteam.mjs",
+    "drift:watch": "node scripts/drift-watch.mjs",
+    "drift:report": "node scripts/drift-report.mjs"
   },
   "dependencies": {
     "@pactpay/pact-core": "workspace:*",

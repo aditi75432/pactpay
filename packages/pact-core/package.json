@@ -24,6 +24,7 @@
     "./checkout-quote": "./src/checkout-quote.ts",
     "./autonomy": "./src/autonomy.ts",
     "./untrusted-text": "./src/untrusted-text.ts",
-    "./seller-world": "./src/seller-world.ts"
+    "./seller-world": "./src/seller-world.ts",
+    "./agent-key": "./src/agent-key.ts"
   }
 }
