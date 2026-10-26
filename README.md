@@ -169,8 +169,11 @@ Real checkout-page evidence (a browser extension or merchant APIs), authenticate
 
 ## Docs
 
-[Judge guide](docs/JUDGES.md) · [Agent integration](docs/AGENT-INTEGRATION.md) · [Limitations](docs/LIMITATIONS.md) · [Sponsor tools](docs/SPONSOR-TOOLS.md) · [Deploy on Render](docs/DEPLOY-RENDER.md) · [Real data](docs/REAL-DATA.md) · [Threat model](docs/THREAT_MODEL.md) · [Video storyboard](docs/VIDEO-STORYBOARD.md) · [Devpost text](docs/DEVPOST-SUBMISSION.md)
+[Judge guide](docs/JUDGES.md) · [Agent integration](docs/AGENT-INTEGRATION.md) · [Limitations](docs/LIMITATIONS.md)· [Deploy on Render](docs/DEPLOY-RENDER.md) · [Real data](docs/REAL-DATA.md) · [Threat model](docs/THREAT_MODEL.md) · [Video storyboard](docs/VIDEO-STORYBOARD.md) 
+
+<!-- [Devpost text](docs/DEVPOST-SUBMISSION.md) -->
+<!-- [Sponsor tools](docs/SPONSOR-TOOLS.md)  -->
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE). Built for the PayPal AI Hackathon.
+MIT. See [`LICENSE`](LICENSE). Built for the # **Meta Global AI Developer Hackathon** 2026.
