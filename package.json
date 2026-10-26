@@ -1,0 +1,25 @@
+{
+  "name": "pactpay",
+  "private": true,
+  "packageManager": "pnpm@10.12.4",
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "start": "pnpm --filter web start",
+    "agent:mcp": "node scripts/mcp-server.mjs",
+    "agent:redteam": "node scripts/agent-redteam.mjs",
+    "drift:watch": "node scripts/drift-watch.mjs",
+    "drift:report": "node scripts/drift-report.mjs"
+  },
+  "dependencies": {
+    "@pactpay/pact-core": "workspace:*",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}

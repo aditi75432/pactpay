@@ -1,0 +1,31 @@
+{
+  "name": "@pactpay/pact-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./policy": "./src/policy.ts",
+    "./demo-scenarios": "./src/demo-scenarios.ts",
+    "./channel3": "./src/channel3.ts",
+    "./merchant-evidence": "./src/merchant-evidence.ts",
+    "./settlement-state": "./src/settlement-state.ts",
+    "./settlement-demo": "./src/settlement-demo.ts",
+    "./explain": "./src/explain.ts",
+    "./rate-limit": "./src/rate-limit.ts",
+    "./checkout-quote": "./src/checkout-quote.ts",
+    "./autonomy": "./src/autonomy.ts",
+    "./untrusted-text": "./src/untrusted-text.ts",
+    "./seller-world": "./src/seller-world.ts",
+    "./agent-key": "./src/agent-key.ts",
+    "./password": "./src/password.ts"
+  }
+}
