@@ -1,37 +1,60 @@
-# PactPay
+# PactPay × Meta Muse
 
-**Let your AI agent shop. Keep the final say.**
+**An AI agent that shops for you, reads the real checkout page, and can't be talked into overspending.**
 
-PactPay is a safety layer between an AI shopping agent and your money. You approve a short list of rules once. The agent finds real offers and PayPal holds your payment. Right before any money moves, a fixed gate (not an AI model) re-checks the live offer against your rules. If the seller changed anything, the hold is voided and nothing is captured.
+Meta's Muse models do the seeing, hearing, reading and deciding-what-to-try. A small piece of fixed code, not a model, decides whether any money moves. That split is the whole product.
 
-> **Try it:** [ADD HOSTED URL] · **Demo video:** [ADD YOUTUBE LINK] · **Test account:** `judge` / `PactPay-Judge-2026` (PayPal Sandbox money only)
+> **Live app:** [ADD HOSTED URL] · **3-minute demo:** [ADD VIDEO LINK] · **Judge login:** `judge` / `PactPay-Judge-2026` (PayPal Sandbox test money only)
+> **Track:** Indie Developer · **Theme:** Build for Your World
 
 ![PactPay architecture](docs/architecture.png)
 
 ## The problem
 
-AI agents can already browse and check out. What they can't do reliably is notice that the deal changed between "you said yes" and "the money moved": a price edit, an item that sold out, a substituted product, or a line of text in a listing that tells the agent to ignore its limits.
+AI agents can already browse and check out. What they can't do reliably is notice that the deal changed between "you said yes" and "the money moved": a price edit, a surprise fee, a swapped item, or one line of small print telling the agent to ignore its limits. Today you either approve every purchase yourself (which defeats the point of an agent) or you accept the risk.
 
-People don't trust agents with their money yet. Two surveys of shoppers point the same way:
-- In a [Riskified Q1 2026 survey](https://ir.riskified.com/node/8896/pdf), about half of respondents said the AI platform, not the retailer, should be responsible for unauthorized agent purchases.
-- In [Accenture's 2026 consumer research](https://www.accenture.com/gb-en/insights/consulting/talk-my-ai-agent), few shoppers were open to fully autonomous purchasing, including payment.
+## The idea
 
-These are self-reported surveys, not observed behavior. They describe the trust gap; they don't prove demand for PactPay.
+> **Muse can see, hear, read and act. It can't release your money.**
 
-Today an AI platform has two choices: make the user confirm every purchase (which defeats the point of an agent) or accept the risk. Fraud checks don't help, because a legitimate merchant whose offer drifted isn't fraud. It just isn't what the user approved.
+| Muse does (probabilistic) | Fixed code does (deterministic) |
+|---|---|
+| Hears your request | Locks the rules you approved |
+| Writes the rules for you to review | Compares every number to those rules |
+| Chooses which tools to call | Checks the itemized charges add up |
+| Reads a checkout screenshot, twice | Scans page text for instructions aimed at an AI |
+| Explains the outcome | Re-checks the live offer and decides capture or void |
 
-## The solution
+If the model is fooled, confused or wrong, the worst case is that it asks for something the gate then refuses.
 
-PactPay adds the missing step between authorizing a payment and capturing it.
+## Built on Meta
 
-1. **You set the rules once.** Describe a purchase in plain words. AI turns it into editable rules (budget, must-haves, preferences). You approve them. They are stored and hashed on the server and locked.
-2. **You choose how much the agent does alone.** Ask me every time, ask me above a limit, or handle it within my rules.
-3. **The agent shops.** It searches a live catalog, ranks offers against your rules, and shows the **final total with shipping and tax up front**, so the number you see is the number PayPal holds.
-4. **PayPal holds the money.** Nothing is captured. A person approves each hold.
-5. **A fixed gate decides.** It re-fetches the live offer and the live PayPal authorization and checks everything. All pass: capture once. Anything fails or is unknown: void the hold and capture nothing.
-6. **You get proof.** A plain-English result, an attempts table, a PASS / FAIL / UNKNOWN decision receipt, a live PayPal confirmation, and a hash-chained audit trail.
+Every AI feature in this app runs on a Meta model. Nothing else is called.
 
-> The AI can recommend. It can't release your money.
+| Meta model | Where it's used | Call |
+|---|---|---|
+| **Muse Spark 1.3** (Meta Model API) | Writes your rules (strict structured output), runs the tool-calling shopping agent, reads checkout screenshots (vision), reads seller listings, explains outcomes | `POST /v1/chat/completions` with `tools`, `response_format: json_schema`, `image_url` |
+| **Muse Spark Open** (open weights, via Baseten) | The same features on open weights, and the **second independent reader** in the Checkout Inspector | OpenAI-compatible chat completions |
+| **Muse Voice Transcribe 1.0** | "Say it instead": speak your purchase, get the text | `POST /v1/asr/transcribe` (WAV, PUSH_TO_TALK) |
+
+How it goes beyond a basic integration:
+
+- **A real agent loop**, not a prompt wrapper. Muse picks tools, we answer every call, bound the loop, cap tool output, and stop when a human must act. Tested without a network ([`agent-loop.test.ts`](packages/pact-core/test/agent-loop.test.ts)).
+- **Multimodal verification.** Muse Spark reads a checkout screenshot; fixed code does the arithmetic and the policy.
+- **Cross-model agreement.** With both keys set, *two different Meta models* read the page independently. If they disagree, nothing is called safe.
+- **Open weights in the safety path**, not a side demo.
+- **Honest protocol use:** `max_completion_tokens`, `reasoning_effort`, `json_schema` output, `tool_choice: "auto"`, and full tool-call replay, all as Meta's docs specify. See [`docs/META-INTEGRATION.md`](docs/META-INTEGRATION.md).
+
+## What you can do
+
+1. **Say it.** Hold the mic and describe a purchase. Muse Voice Transcribe turns it into text.
+2. **Rules from plain words.** Muse Spark drafts editable rules (budget, must-haves, preferences). You approve; they're hashed and locked server-side. The badge says exactly which model wrote them.
+3. **Muse Agent** (`/muse-agent`). Give it a job and watch it call tools live: read rules, search real stores, rank offers, ask for a PayPal hold. Click **Try to tempt it** and watch PactPay refuse. A person approves the hold; the gate settles.
+4. **Checkout Inspector** (`/inspector`). Upload any checkout screenshot. Muse reads it twice; the gate returns **Safe to pay / Do not pay / Can't verify** with a rule-by-rule receipt. Five built-in pages (honest, hidden fee, hidden instructions, over budget, not a checkout) and a one-click **suite** that proves every verdict.
+5. **Seller-text reader.** Muse extracts only facts it can quote word for word, labeled *seller-stated, not verified*, with a live prompt-injection test.
+6. **Settlement gate.** Right before capture, the live offer and live PayPal authorization are re-fetched and every rule re-checked. Any fail or unknown: void, capture nothing.
+7. **Activity + proof.** Decision receipts (PASS / FAIL / UNKNOWN), a hash-chained audit trail, and an AG Grid activity log.
+8. **Bring your own agent.** A limited, expiring agent key plus an MCP server and HTTP gateway. `pnpm agent:muse` runs a Muse agent from the terminal.
 
 ## How it works
 
@@ -39,141 +62,95 @@ PactPay adds the missing step between authorizing a payment and capturing it.
 sequenceDiagram
     autonumber
     actor U as Shopper
-    participant P as PactPay
-    participant A as AI agent
-    participant C as Channel3 (live catalog)
+    participant M as Meta Muse
+    participant P as PactPay gate (fixed code)
+    participant C as Live catalog
     participant PP as PayPal Sandbox
-    U->>P: Describe purchase, review rules, set autonomy, approve
-    P->>P: Store and hash the approved rules (locked)
-    A->>P: Shortlist (agent key or built-in agent)
-    P->>C: Search live offers
-    P-->>A: Ranked offers with final totals
-    A->>P: Ask for a hold on the best PASS offer
-    P->>PP: Create order (authorize, do not capture)
+    U->>M: Speak or type what to buy
+    M-->>U: Draft rules (you review and approve)
+    U->>P: Approve rules + autonomy (hashed, locked)
+    M->>P: Tool calls: get_rules, shortlist, hold_payment
+    P->>C: Search live offers, rank against rules
+    P->>PP: Create hold (authorize, do not capture)
     U->>PP: Approve the hold
-    A->>P: Request settlement
+    M->>P: request_settlement
     P->>C: Re-check the live offer now
-    P->>PP: Re-fetch the authorization
-    alt every rule still passes on fresh evidence
+    alt every rule passes on fresh evidence
         P->>PP: Capture once
-    else anything changed, is stale or is unknown
+    else anything changed, stale or unknown
         P->>PP: Void. Nothing captured
-        P-->>A: Choose a genuinely different offer, or stop
     end
-    P-->>U: Plain-English result, receipt, audit trail
+    Note over M,P: Muse never holds authority. The gate has no model in it.
 ```
 
-## Who it's for
+## Why it can't be tricked
 
-| User | What they get |
-|---|---|
-| **Shoppers who use AI agents** | Delegate buying without watching every step, with a hard limit the agent can't cross. |
-| **AI assistant and agent platforms** | A way to let agents transact and *prove* they stayed within the user's rules. Connect over MCP or HTTP with a limited key. |
-| **Marketplaces and procurement tools** | A control point between agent-initiated orders and payment capture, with an audit trail. |
-| **PayPal developers** | A worked example of authorize-then-capture with deterministic policy, built on Orders and Payments. |
+- **No authority for the model.** Its only tools are the gateway; there is no tool to edit rules, raise a limit or release money (ADR-002).
+- **Untrusted input stays data.** Seller text and screenshot text are scanned and labeled hostile; model output is parsed, bounded and validated before use.
+- **Unknown is never safe.** Unreadable page, missing field, or two readings that disagree all end in *Can't verify*.
+- **Autonomy is server-enforced.** The agent key is bound to one approval, expires in 24 hours, is stored as a hash, and always acts as the agent.
+- **Authorize, then capture** (ADR-001). Uncertain outcomes go to review, never a blind retry.
 
-## Why it matters, and the market
+## Try it in two minutes
 
-Analysts expect agent-driven purchases to become a meaningful share of online retail. [Morgan Stanley](https://morganstanley.com/insights/articles/agentic-commerce-market-impact-outlook) and [Bain](https://www.bain.com/insights/2030-forecast-how-agentic-ai-will-reshape-us-retail-snap-chart/) both publish 2030 forecasts in the hundreds of billions of dollars of US e-commerce; the figures differ because they define "agentic" differently. We don't claim a market size for PactPay itself. The point is that every dollar that flows through an agent needs a trustworthy check at the moment of payment.
+No PayPal setup needed for the Meta features: open **Checkout check**, pick *A page that talks to the agent*, press **Inspect**, then **Run the suite**. Full path in [`docs/JUDGES.md`](docs/JUDGES.md).
 
-**Business model (a hypothesis, not a result):** a per-protected-transaction fee plus a platform fee for AI platforms and marketplaces that embed the gate, with premium audit, policy management and analytics. The defensible parts are the settlement gate, the policy compiler, the evidence model and the integrations, not the dashboard.
+## Run it locally
 
-## Competitive landscape and novelty
-
-Several efforts make agent payments safer. They mostly answer *who may pay* and *how credentials are protected*. PactPay answers a different question: *is this payment still what the user approved?*
-
-| Effort | What it covers | How PactPay relates |
-|---|---|---|
-| [Google's Agent Payments Protocol (AP2)](https://www.vellum.ai/blog/googles-ap2-a-new-protocol-for-ai-agent-payments) and its signed Intent and Cart mandates | Proving what the user authorized; announced with 60+ partners including PayPal | Complementary. AP2 proves authorization; PactPay checks the offer *after* authorization and *before* capture. |
-| Card-network programs (Visa Intelligent Commerce, Mastercard Agent Pay) | Agent identity and tokenized credentials | Complementary. PactPay doesn't do identity or tokenization. |
-| OpenAI and Stripe's Agentic Commerce Protocol | A standard way for agents to check out with merchants | Complementary. It standardizes checkout; PactPay guards capture. |
-| PayPal's Agent Toolkit and MCP server | Tools for agents to call PayPal APIs | PactPay is the policy layer that decides whether those calls (such as capture) should happen. |
-| Fraud and risk engines | Detecting anomalous or fraudulent payments | Different problem. A legitimate offer that drifted isn't fraud. |
-
-**What is novel here** (the combination, not a single trick): typed rules the user approves once; server-enforced autonomy so an agent holding a key can't act above the user's limit; a gate that makes the capture decision from fixed rules on fresh, attributable evidence, treating *unknown* as *not allowed*; recovery that forces the agent to a genuinely different offer after a failure; and seller text treated as untrusted data with a live injection test.
-
-## What you can do in the app
-
-- **Shopper flow:** describe, edit rules, choose autonomy, shortlist with final totals, hold, result.
-- **Autopilot:** the agent picks, holds and settles by itself, with visible countdowns and Cancel and Pause at every step. After a block it skips that offer and finds the next one.
-- **Bring your own agent:** create a limited agent key, then use MCP (`scripts/mcp-server.mjs`) or HTTP. `pnpm agent:redteam` shows a misbehaving agent being refused. `scripts/llm-agent.mjs` runs a real LLM agent through the gateway.
-- **Seller-text reader (second use of AI):** reads a listing, returns only facts it can quote word for word, labels them *seller-stated, not verified*, and includes a live prompt-injection test.
-- **Activity (AG Grid):** every attempt with offer, outcome, captured amount, failed rules, evidence state, injected change, autonomy, quick filters, and expandable event lineage.
-- **Accounts:** username and password sign-up and sign-in; your rules, keys and activity are private to your account.
-
-## Try it
-
-**Hosted:** open [ADD HOSTED URL], sign in as `judge` / `PactPay-Judge-2026` (or create your own account), and follow [`docs/JUDGES.md`](docs/JUDGES.md). The demo account is shared, so its Activity may show other reviewers' attempts. Create your own account for a private view. PayPal Sandbox asks for a buyer test login; it's in the Devpost testing instructions.
-
-**Locally:** you need Node 20+, pnpm 10 and Docker.
+Needs Node 20+ (22 recommended), pnpm 10, Docker.
 
 ```bash
 pnpm install
-cp .env.example apps/web/.env.local     # fill in your keys (Windows: copy .env.example apps\web\.env.local)
+cp .env.example apps/web/.env.local     # Windows: copy .env.example apps\web\.env.local
+# put MODEL_API_KEY (Meta Model API) in apps/web/.env.local; add BASETEN_API_KEY for open weights
 pnpm db:up
 pnpm dev                                 # http://localhost:3000
 ```
 
-Local runs allow guest use. Set `PACTPAY_REQUIRE_LOGIN=1` to require an account (hosted deployments do), and set `PACTPAY_DEMO_USERNAME` and `PACTPAY_DEMO_PASSWORD` to create a shared demo account. Keys you need: a PayPal Sandbox app and buyer test account, a Channel3 key, and optionally a Groq key. Without Groq the app falls back to a basic parser and says so on screen.
+The Inspector (demo rules) and voice input need only `MODEL_API_KEY`. The full shop-and-settle flow also needs PayPal Sandbox and Channel3 keys. Without a Meta key the app falls back to a basic rule parser and says so on screen.
 
-Verify a clean install:
+Verify:
 
 ```bash
 pnpm --filter @pactpay/pact-core typecheck
-pnpm --filter @pactpay/pact-core test      # 138+ tests
+pnpm --filter @pactpay/pact-core test        # 170+ tests, no network
 pnpm --filter web typecheck
 pnpm --filter web build
 ```
 
-## Architecture
-
-The diagram above is [`docs/architecture.svg`](docs/architecture.svg). In short:
+## Repository layout
 
 ```
-apps/web              Next.js app: shopper flow, order screen, Activity (AG Grid), auth, API routes
-packages/pact-core    Pure TypeScript: policy engine, settlement gate, autonomy, audit chain,
-                      untrusted-text guard, seller simulation, agent keys, passwords (138+ tests)
-lib                   Server modules: PostgreSQL, PayPal, accounts, approvals, agent keys, seller world
-scripts               MCP server, red-team, LLM agent, drift collector and report
-docs                  Judge guide, storyboard, Devpost text, limitations, threat model, ADRs
+apps/web              Next.js app: shop flow, Muse Agent, Checkout Inspector, Activity, API routes
+packages/pact-core    Pure TypeScript: policy engine, settlement gate, checkout inspection, agent loop,
+                      untrusted-text guard, audit chain, autonomy (170+ tests)
+lib                   Server modules: Meta model gateway (llm-provider.ts), PostgreSQL, PayPal, accounts
+scripts               MCP server, Muse CLI agent, red-team, drift tools
+docs                  Judge guide, Meta integration, demo script, limitations, threat model, ADRs
 ```
 
-Design rules worth knowing: the model never has settlement authority (ADR-002); authorize before capture (ADR-001); a transaction is reachable only by the account that approved its rules; the app only ever talks to the PayPal Sandbox.
+## The Meta layer:
 
-## Security model
+- `lib/llm-provider.ts`: Meta model gateway (Meta Model API + Muse Spark Open)
+- `packages/pact-core/src/checkout-inspection.ts`, `inspection-samples.ts`, `agent-loop.ts`, `wav.ts`, `ai-labels.ts`
+- `apps/web/app/inspector`, `apps/web/app/muse-agent`, `apps/web/app/api/{inspector,muse-agent,voice,ai}`, `components/VoiceButton.tsx`
+- Rewiring of rule drafting, seller-text reading and outcome explanation onto Muse; the budget-cap fix (`quoteRulesFor`); `scripts/llm-agent.mjs`
 
-- Rules are stored server-side, hashed, locked, and bound to your account. Orders accept an approval id, never browser-supplied rules.
-- Every transaction route checks that the transaction belongs to the caller's account. A leaked transaction id gives no access.
-- The settlement route re-fetches the live PayPal authorization, uses an idempotent claim, and routes uncertain outcomes (timeouts, ambiguous responses) to review instead of retrying blindly.
-- Agent keys are bound to one approval, expire in 24 hours, can be revoked, and are stored as hashes. The gateway always acts as the agent, never as the user.
-- Passwords are hashed with scrypt. Login sessions are opaque tokens stored as hashes. Auth and costly routes are rate limited.
-- Every PayPal call refuses to run unless the configured host is the PayPal Sandbox.
-- The audit trail is hash-chained, so ordinary edits are detectable.
+PactPay's policy engine, settlement gate, PayPal Sandbox flow and activity tooling are an existing project by the same author, which this submission builds on. They are described here so judges can see what the Meta layer sits on top of.
 
-## Limitations and constraints
+## Limitations
 
-Please read these before judging. Full list in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md).
+Read [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md). Key points:
 
-- **Sandbox only.** PayPal Sandbox test money. No retailer order is ever placed, and PactPay is not integrated with any retailer's checkout.
-- **Shipping and tax are fixed test values** (a flat $4.99 and 8%). The seller changing the deal is **simulated** with a labelled Demo control, because a sandbox can't pay a real store and real stores won't change on cue. Catalog data and PayPal calls are real, and so is the re-check against the live catalog.
-- **Catalog drift, not checkout drift.** Our drift tooling measures what the catalog reports, not what a retailer's checkout charges.
-- **A person still approves each hold on PayPal.** PactPay doesn't skip that step.
-- **Basic accounts.** Username and password only: no email verification, password reset or multi-factor sign-in. The agent key stands in for the agent's own identity; a production system would authenticate agents separately.
-- **USD only**, a single catalog provider, and AI output that can be wrong (the user reviews the rules; a labelled fallback parser exists).
-- **Not a regulated financial product.** No KYC, PCI or compliance claims.
-- **Free hosting limits.** Free Render plans sleep and the free database expires after 30 days.
-
-## Roadmap
-
-Real checkout-page evidence (a browser extension or merchant APIs), authenticated agent identities, merchant integrations, saved payment methods so holds need no tap, and a measured drift study. See [`docs/REAL-DATA.md`](docs/REAL-DATA.md).
+- **Sandbox only.** PayPal Sandbox test money; no retailer order is ever placed. Shipping and tax are fixed test values, and the seller changing the deal is a labeled simulation.
+- **The Inspector can't catch a model that misreads in the same way twice.** Two readings, cross-model agreement and arithmetic make that unlikely, not impossible. It is a guard, not a guarantee.
+- **A person still approves each hold on PayPal.**
+- Basic accounts, USD only, one catalog provider, AI output that can be wrong (you review the rules).
 
 ## Docs
 
-[Judge guide](docs/JUDGES.md) · [Agent integration](docs/AGENT-INTEGRATION.md) · [Limitations](docs/LIMITATIONS.md)· [Deploy on Render](docs/DEPLOY-RENDER.md) · [Real data](docs/REAL-DATA.md) · [Threat model](docs/THREAT_MODEL.md) · [Video storyboard](docs/VIDEO-STORYBOARD.md) 
-
-<!-- [Devpost text](docs/DEVPOST-SUBMISSION.md) -->
-<!-- [Sponsor tools](docs/SPONSOR-TOOLS.md)  -->
+[Judge guide](docs/JUDGES.md) · [Meta integration](docs/META-INTEGRATION.md) · [Demo video script](docs/DEMO-VIDEO.md) · [Submission copy](docs/SUBMISSION.md) · [Limitations](docs/LIMITATIONS.md) · [Threat model](docs/THREAT_MODEL.md) · [Deploy on Render](docs/DEPLOY-RENDER.md)
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE). Built for the # **Meta Global AI Developer Hackathon** 2026.
+MIT. See [`LICENSE`](LICENSE). Built for the Meta Global AI Developer Hackathon 2026.
