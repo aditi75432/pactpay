@@ -136,7 +136,6 @@ docs                  Judge guide, Meta integration, demo script, limitations, t
 - `apps/web/app/inspector`, `apps/web/app/muse-agent`, `apps/web/app/api/{inspector,muse-agent,voice,ai}`, `components/VoiceButton.tsx`
 - Rewiring of rule drafting, seller-text reading and outcome explanation onto Muse; the budget-cap fix (`quoteRulesFor`); `scripts/llm-agent.mjs`
 
-PactPay's policy engine, settlement gate, PayPal Sandbox flow and activity tooling are an existing project by the same author, which this submission builds on. They are described here so judges can see what the Meta layer sits on top of.
 
 ## Limitations
 
