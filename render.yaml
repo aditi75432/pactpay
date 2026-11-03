@@ -33,13 +33,13 @@ services:
       - key: BASETEN_MODEL
         value: meta-models/muse-spark-open-1026
       - key: PACTPAY_REQUIRE_LOGIN
-        value: "1"
+        value: "0"
       - key: PACTPAY_DEMO_USERNAME
         value: judge
       - key: PACTPAY_DEMO_PASSWORD
         sync: false   # enter PactPay-Judge-2026 (the pair listed in the README) or your own
       - key: PACTPAY_SHOW_DEMO_CREDENTIALS
-        value: "1"
+        value: "0"
       # NEXT_PUBLIC_APP_URL is optional on Render: the app falls back to RENDER_EXTERNAL_URL.
 databases:
   - name: pactpay-db
