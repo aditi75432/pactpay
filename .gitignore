@@ -3,13 +3,12 @@ node_modules/
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
 coverage/
 *.log
 .DS_Store
-.env.*
-!.env.example
-
 *.tsbuildinfo
-
 Patch-notes/
-docs/
+document/
+demo-kit/

@@ -4,11 +4,13 @@ import { useMemo, useState } from "react";
 import type { Constraint, PurchasePact } from "@pactpay/pact-core";
 import AppShell from "./components/AppShell";
 import { describeAutonomy, parseAutonomy, type AutonomyMode } from "@pactpay/pact-core/autonomy";
+import { modelDisplayName } from "@pactpay/pact-core/ai-labels";
+import VoiceButton from "./components/VoiceButton";
 import { previewChannel3TestQuote } from "@pactpay/pact-core/settlement-demo";
 import { logEvent, resetRun, saveAutonomy } from "./components/agentLog";
 import StepTracker from "./components/StepTracker";
 
-type CompilerName = "GROQ" | "RULE_BASED_FALLBACK";
+type CompilerName = "MODEL" | "RULE_BASED_FALLBACK";
 type Compilation = {
   title: string;
   searchQuery: string;
@@ -187,6 +189,7 @@ export default function Home() {
             </div>
             <label className="pp-sr" htmlFor="intent">Describe your purchase</label>
             <textarea id="intent" className="pp-textarea" value={intent} onChange={(event) => setIntent(event.target.value)} maxLength={1200} />
+            <VoiceButton onTranscript={(heard) => { setIntent(heard.slice(0, 1200)); setCompilation(null); setError(null); }} />
             <div className="pp-row" style={{ margin: "14px 0 18px" }}>
               <span className="pp-tiny pp-muted" style={{ fontWeight: 700 }}>Try:</span>
               {EXAMPLES.map((example) => (
@@ -213,8 +216,8 @@ export default function Home() {
                     <h2 className="pp-h3">{compilation.title}</h2>
                     <p className="pp-small pp-muted" style={{ marginTop: 4 }}>Check these rules. They&apos;re the only thing the agent can act on.</p>
                   </div>
-                  <span className={`pp-badge ${compilation.compiler === "GROQ" ? "pp-badge-good" : "pp-badge-warn"}`}>
-                    {compilation.compiler === "GROQ" ? "Written by AI" : "Basic parser"}
+                  <span className={`pp-badge ${compilation.compiler !== "RULE_BASED_FALLBACK" ? "pp-badge-good" : "pp-badge-warn"}`}>
+                    {compilation.compiler !== "RULE_BASED_FALLBACK" ? `Written by ${modelDisplayName(compilation.model)}` : "Basic parser"}
                   </span>
                 </div>
                 {compilation.notice && <p className="pp-callout pp-callout-warn pp-small" style={{ marginBottom: 14 }}>{compilation.notice}</p>}

@@ -81,3 +81,16 @@ export function applyCheckoutQuote<T extends QuoteEvaluationLike>(
     missingHardEvidence: evaluation.missingHardEvidence.filter((item) => !totalRules.some((rule) => rule.id === item.constraintId)),
   };
 }
+
+/**
+ * The rules a checkout estimate may resolve for a pact: the pact's own constraints plus the hidden `system.budget_cap`
+ * rule the policy engine adds whenever the pact has a maxTotalAmount. Without the second, a shopper who sets a total
+ * limit would see every offer stay "unknown" on that system rule.
+ */
+export function quoteRulesFor(pact: { constraints: readonly QuoteRule[]; maxTotalAmount?: number | undefined }): QuoteRule[] {
+  const rules: QuoteRule[] = [...pact.constraints];
+  if (typeof pact.maxTotalAmount === "number") {
+    rules.push({ id: "system.budget_cap", field: "total", comparator: "lte", expected: pact.maxTotalAmount });
+  }
+  return rules;
+}

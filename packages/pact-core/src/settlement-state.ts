@@ -65,6 +65,12 @@ export interface SettlementGateFacts {
   evidenceAttributable: boolean;
   evidenceConflictFree: boolean;
   securityClear: boolean;
+  /**
+   * The Checkout Inspector's verdict on the merchant's checkout page for this order, when one was attached:
+   * "safe" (SAFE_TO_PAY), "blocked" (DO_NOT_PAY), "unverified" (CANNOT_VERIFY, or the verdict couldn't be read).
+   * "none" or omitted means no inspection was attached, which leaves the decision to the other checks.
+   */
+  checkoutInspection?: "none" | "safe" | "blocked" | "unverified";
 }
 
 export type SettlementGateDecision =
@@ -112,6 +118,8 @@ export function evaluateSettlementGate(facts: SettlementGateFacts): SettlementGa
   if (!facts.evidenceAttributable) reasons.push("EVIDENCE_NOT_ATTRIBUTABLE");
   if (!facts.evidenceConflictFree) reasons.push("EVIDENCE_CONFLICT");
   if (!facts.securityClear) reasons.push("SECURITY_GATE_BLOCKED");
+  if (facts.checkoutInspection === "blocked") reasons.push("CHECKOUT_INSPECTION_BLOCKED");
+  if (facts.checkoutInspection === "unverified") reasons.push("CHECKOUT_INSPECTION_UNVERIFIED");
   return reasons.length === 0
     ? { decision: "CAPTURE_ELIGIBLE", reasons: [] }
     : { decision: "BLOCK", reasons };

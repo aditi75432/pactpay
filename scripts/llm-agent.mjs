@@ -1,31 +1,33 @@
 #!/usr/bin/env node
 /**
- * A real LLM shopping agent that works ONLY through PactPay's agent gateway.
+ * A Meta Muse shopping agent that works ONLY through PactPay's agent gateway.
  * The model decides which tools to call. It cannot change the rules or override the settlement gate.
  *
- *   PACTPAY_URL=http://localhost:3000 PACTPAY_AGENT_KEY=ppk_... GROQ_API_KEY=... \
- *     node scripts/llm-agent.mjs "Buy me a wireless mouse under $50" [--tempt] [--auto-approve]
+ *   PACTPAY_URL=http://localhost:3000 PACTPAY_AGENT_KEY=ppk_... MODEL_API_KEY=... \
+ *     node scripts/llm-agent.mjs "Buy me a wireless mouse under $50" [--tempt] [--auto-approve] [--open-weights]
  *
  *   --tempt          after the hold, the user pressures the agent to "just release it now" (watch it get refused
  *                    if your autonomy setting doesn't allow that)
  *   --auto-approve   don't pause for you to approve the PayPal hold (for scripted runs)
- * Env: GROQ_MODEL (default openai/gpt-oss-20b), LLM_BASE_URL (default Groq's OpenAI-compatible endpoint).
+ *   --open-weights   use Muse Spark Open on Baseten (needs BASETEN_API_KEY) instead of the Meta Model API
+ * Env: META_MODEL (default muse-spark-1.3), BASETEN_MODEL (default meta-models/muse-spark-open-1026).
  */
 import readline from "node:readline/promises";
 
+const args = process.argv.slice(2);
+const OPEN = args.includes("--open-weights");
 const BASE = (process.env.PACTPAY_URL || "http://localhost:3000").replace(/\/$/, "");
 const KEY = process.env.PACTPAY_AGENT_KEY || "";
-const LLM_URL = (process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/$/, "");
-const LLM_KEY = process.env.GROQ_API_KEY || process.env.LLM_API_KEY || "";
-const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
-const args = process.argv.slice(2);
+const LLM_URL = (OPEN ? process.env.BASETEN_BASE_URL || "https://inference.baseten.co/v1" : process.env.META_API_BASE_URL || "https://api.meta.ai/v1").replace(/\/$/, "");
+const LLM_KEY = OPEN ? process.env.BASETEN_API_KEY || "" : process.env.MODEL_API_KEY || process.env.META_API_KEY || "";
+const MODEL = OPEN ? process.env.BASETEN_MODEL || "meta-models/muse-spark-open-1026" : process.env.META_MODEL || "muse-spark-1.3";
 const TEMPT = args.includes("--tempt");
 const AUTO = args.includes("--auto-approve");
 const TASK = args.filter((a) => !a.startsWith("--")).join(" ").trim() || "Buy me a wireless mouse under $50";
 const MAX_STEPS = 14;
 
 if (!KEY) { console.error("Set PACTPAY_AGENT_KEY (create one in PactPay after approving your rules)."); process.exit(2); }
-if (!LLM_KEY && !process.env.LLM_BASE_URL) { console.error("Set GROQ_API_KEY (or LLM_BASE_URL for another OpenAI-compatible endpoint)."); process.exit(2); }
+if (!LLM_KEY) { console.error(OPEN ? "Set BASETEN_API_KEY." : "Set MODEL_API_KEY (your Meta Model API key)."); process.exit(2); }
 
 const color = (code, text) => (process.stdout.isTTY ? `\u001b[${code}m${text}\u001b[0m` : text);
 const say = (who, text) => console.log(`${who} ${text}`);
@@ -55,11 +57,9 @@ async function runTool(name, input) {
 }
 
 async function chat(messages) {
-  const response = await fetch(`${LLM_URL}/chat/completions`, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...(LLM_KEY ? { authorization: `Bearer ${LLM_KEY}` } : {}) },
-    body: JSON.stringify({ model: MODEL, temperature: 0.2, messages, tools: TOOLS.map((tool) => ({ type: "function", function: tool })), tool_choice: "auto" }),
-  });
+  const body = { model: MODEL, temperature: 0.2, messages, tools: TOOLS.map((tool) => ({ type: "function", function: tool })), tool_choice: "auto" };
+  if (OPEN) body.max_tokens = 2500; else { body.max_completion_tokens = 2500; body.reasoning_effort = "low"; body.parallel_tool_calls = false; }
+  const response = await fetch(`${LLM_URL}/chat/completions`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${LLM_KEY}` }, body: JSON.stringify(body) });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(`Model call failed (${response.status}): ${payload.error?.message ?? JSON.stringify(payload).slice(0, 200)}`);
   return payload.choices?.[0]?.message ?? { role: "assistant", content: "" };
@@ -80,7 +80,7 @@ let lastHold = null;
 console.log(color(1, `\nTask: ${TASK}`) + color(2, `   (model ${MODEL}, gateway ${BASE})\n`));
 for (let step = 1; step <= MAX_STEPS; step += 1) {
   const reply = await chat(messages);
-  messages.push(reply);
+  messages.push({ role: "assistant", content: reply.content ?? null, ...(reply.tool_calls?.length ? { tool_calls: reply.tool_calls } : {}) });
   if (reply.content) say(color(36, "agent:"), reply.content.trim());
   const calls = reply.tool_calls ?? [];
   if (calls.length === 0) {

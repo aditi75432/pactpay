@@ -41,6 +41,7 @@ import { readSessionId } from "../../../../../../lib/session";
 import { getAutonomyForPactHash } from "../../../../../../../../lib/pact-approvals";
 import { decideSettlement } from "@pactpay/pact-core/autonomy";
 import { requireTransactionAccess } from "../../../../../../lib/ownership";
+import { getLatestCheckoutInspection } from "../../../../../../../../lib/checkout-inspections";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -516,6 +517,20 @@ export async function POST(_request: Request, routeContext: { params: Promise<{ 
       ...offer.evidence.map((item: Evidence) => Date.parse(item.validUntil)).filter((timestamp) => Number.isFinite(timestamp)),
     );
     const gateValidUntil = Number.isFinite(gateValidUntilMs) ? new Date(gateValidUntilMs).toISOString() : now.toISOString();
+    // The real checkout page, as read by Meta Muse and judged by the Checkout Inspector's fixed rules. If one was attached
+    // to this order it can only make the decision stricter. If the lookup itself fails we can't rule out a blocking
+    // verdict, so we fail closed.
+    let checkoutInspection: "none" | "safe" | "blocked" | "unverified" = "none";
+    let inspectionRef: { id: string; outcome: string; createdAt: string } | null = null;
+    try {
+      const latest = await getLatestCheckoutInspection(transactionId);
+      if (latest) {
+        checkoutInspection = latest.outcome === "SAFE_TO_PAY" ? "safe" : latest.outcome === "DO_NOT_PAY" ? "blocked" : "unverified";
+        inspectionRef = { id: latest.id, outcome: latest.outcome, createdAt: latest.createdAt };
+      }
+    } catch {
+      checkoutInspection = "unverified";
+    }
     const gate = evaluateSettlementGate({
       pactApproved: approvalMatches,
       transactionBindingValid: pactHashMatches && baselineHashMatches && offerIdentityMatches && Boolean(bindingEvent),
@@ -532,6 +547,7 @@ export async function POST(_request: Request, routeContext: { params: Promise<{ 
       evidenceAttributable: verification.evidenceAttributable,
       evidenceConflictFree,
       securityClear,
+      checkoutInspection,
     });
     const decision = gate.decision === "CAPTURE_ELIGIBLE" ? "PASS" : "BLOCK";
     const decisionReason = decision === "PASS" ? "all_preconditions_satisfied" : gate.reasons.join(",") || summary.reason;
@@ -570,6 +586,7 @@ export async function POST(_request: Request, routeContext: { params: Promise<{ 
       currentOfferHash: computedCurrentHash,
       securityFindingPresent: Boolean(stored.security_finding),
       channel3LiveRevalidation: liveOfferRevalidation,
+      checkoutInspection: { state: checkoutInspection, ref: inspectionRef },
       gate,
       verification,
       decision,

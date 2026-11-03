@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { applyCheckoutQuote, type QuoteEvaluationLike } from "@pactpay/pact-core/checkout-quote";
+import { applyCheckoutQuote, quoteRulesFor, type QuoteEvaluationLike } from "@pactpay/pact-core/checkout-quote";
 import { shouldAutoHold } from "@pactpay/pact-core/autonomy";
 import { blockedBySellerWorld, offerKey } from "@pactpay/pact-core/seller-world";
 import { previewChannel3TestQuote } from "@pactpay/pact-core/settlement-demo";
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
       if (skipped) { results.push({ ...base, verdict: "SKIPPED", reason: skipped, agentMayHoldAlone: false }); continue; }
       const evaluation = await internalCall(request, ctx, "POST", "/api/discovery/evaluate", { snapshotId: offer.snapshotId, pact });
       if (evaluation.status !== 200) { results.push({ ...base, verdict: "NEEDS_EVIDENCE", reason: "The offer could not be evaluated.", agentMayHoldAlone: false }); continue; }
-      const adjusted = applyCheckoutQuote(evaluation.json as unknown as QuoteEvaluationLike, { price: offer.price, currency: offer.currency }, pact.constraints);
+      const adjusted = applyCheckoutQuote(evaluation.json as unknown as QuoteEvaluationLike, { price: offer.price, currency: offer.currency }, quoteRulesFor(pact));
       const verdict = adjusted.summary.decision === "capture" ? "PASS" : adjusted.summary.hardFailures > 0 ? "BLOCKED" : "NEEDS_EVIDENCE";
       const problem = adjusted.verification.results.find((item) => (item.severity ?? "hard") === "hard" && item.status !== "pass");
       results.push({

@@ -465,6 +465,18 @@ export default function OrderPage() {
           </section>
         )}
 
+        {["CAPTURED", "VOIDED", "POLICY_BLOCKED"].includes(tx.status) ? null : (
+          <section className="pp-card-flat pp-enter" aria-label="Checkout inspection">
+            <div className="pp-card-head" style={{ marginBottom: 0 }}>
+              <div>
+                <h2 className="pp-h3">Inspect the real checkout page <span className="pp-muse-chip" style={{ marginLeft: 6, fontSize: 11.5 }}>Meta Muse vision</span></h2>
+                <p className="pp-small pp-muted" style={{ marginTop: 4 }}>Upload a screenshot of the merchant&rsquo;s checkout. Muse reads it twice and fixed rules judge it. If it isn&rsquo;t safe, PactPay will refuse to capture and void this hold.</p>
+              </div>
+              <a className="pp-btn pp-btn-secondary pp-btn-sm" href={`/inspector?tx=${encodeURIComponent(tx.transactionId)}`}>Inspect checkout</a>
+            </div>
+          </section>
+        )}
+
         <AttemptsPanel currentId={tx.transactionId} currentStatus={tx.status} />
 
         <section className="pp-card" aria-labelledby="timeline-title">

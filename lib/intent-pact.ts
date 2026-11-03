@@ -231,7 +231,7 @@ export interface IntentCompilation {
   searchQuery: string;
   assumptions: string[];
   unverifiedRequirements: string[];
-  compiler: "GROQ" | "RULE_BASED_FALLBACK";
+  compiler: "MODEL" | "RULE_BASED_FALLBACK";
   model: string;
   pact: PurchasePact;
 }

@@ -16,11 +16,32 @@ function Brand() {
 
 const NAV = [
   { href: "/", label: "Shop" },
+  { href: "/muse-agent", label: "Muse Agent" },
+  { href: "/inspector", label: "Checkout check" },
   { href: "/platforms", label: "For AI platforms" },
   { href: "/control-center", label: "Activity" },
 ];
 
 type Me = { authenticated: boolean; username: string | null; loginRequired: boolean };
+type AiStatus = { configured: boolean; providers: Array<{ id: string; modelLabel: string; model: string; openWeights: boolean }>; crossModel: boolean };
+
+/** Always-visible proof of which Meta model is behind the app right now. */
+function MuseChip() {
+  const [status, setStatus] = useState<AiStatus | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/ai/status", { cache: "no-store" }).then((r) => r.json() as Promise<AiStatus>).then((v) => { if (!cancelled) setStatus(v); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+  if (!status) return null;
+  const label = status.crossModel ? `${status.providers[0]?.modelLabel ?? "Muse"} + Open` : status.providers[0]?.modelLabel ?? "Muse";
+  const names = status.providers.map((p) => p.modelLabel).join(" + ");
+  return (
+    <span className="pp-muse-chip" data-off={!status.configured} title={status.configured ? `AI calls in this app run on: ${names}` : "No Meta model is configured: the app uses its basic local parser."}>
+      <i aria-hidden="true" />{status.configured ? `Meta ${label}` : "Meta Muse not set up"}
+    </span>
+  );
+}
 const PUBLIC_PATHS = ["/login", "/platforms"];
 
 export default function AppShell({ children, narrow = false }: { children: ReactNode; narrow?: boolean }) {
@@ -51,6 +72,8 @@ export default function AppShell({ children, narrow = false }: { children: React
               return <a key={item.href} href={item.href} {...(active ? { "aria-current": "page" as const } : {})}>{item.label}</a>;
             })}
           </nav>
+          <div className="pp-header-right">
+          <MuseChip />
           <span className="pp-testmode" title="Payments use PayPal Sandbox test money only."><i aria-hidden="true" />Test mode · no real money</span>
           {me?.authenticated ? (
             <span className="pp-small" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -67,6 +90,7 @@ export default function AppShell({ children, narrow = false }: { children: React
               <a href="/protected-demo">Fixed $849 simulator</a>
             </div>
           </details>
+          </div>
         </div>
       </header>
       <main className={`pp-main${narrow ? " pp-narrow" : ""}`} style={narrow ? { maxWidth: 820 } : undefined}>{children}</main>

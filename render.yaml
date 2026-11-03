@@ -24,10 +24,14 @@ services:
         sync: false
       - key: CHANNEL3_API_KEY
         sync: false
-      - key: GROQ_API_KEY
+      - key: MODEL_API_KEY        # Meta Model API key (Muse Spark, Muse Voice Transcribe)
         sync: false
-      - key: GROQ_MODEL
-        value: openai/gpt-oss-20b
+      - key: META_MODEL
+        value: muse-spark-1.3
+      - key: BASETEN_API_KEY      # optional: Muse Spark Open (open weights) via Baseten
+        sync: false
+      - key: BASETEN_MODEL
+        value: meta-models/muse-spark-open-1026
       - key: PACTPAY_REQUIRE_LOGIN
         value: "1"
       - key: PACTPAY_DEMO_USERNAME

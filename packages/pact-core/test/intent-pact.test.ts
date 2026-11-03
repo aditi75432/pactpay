@@ -24,7 +24,7 @@ describe("intent compilation comparator normalization", () => {
           severity: "hard",
         },
       ],
-    }, "GROQ", "test-model", "Find a refurbished laptop with a return window of at least 14 days under $900.");
+    }, "MODEL", "test-model", "Find a refurbished laptop with a return window of at least 14 days under $900.");
 
     const returns = compilation.pact.constraints.find((constraint) => constraint.field === "returnWindowDays");
     expect(returns?.comparator).toBe("gte");
@@ -46,7 +46,7 @@ describe("intent compilation comparator normalization", () => {
           severity: "hard",
         },
       ],
-    }, "GROQ", "test-model", "At least 14 days of returns.");
+    }, "MODEL", "test-model", "At least 14 days of returns.");
 
     expect(compilation.pact.constraints.find((constraint) => constraint.field === "returnWindowDays")?.comparator).toBe("gte");
   });
@@ -65,7 +65,7 @@ describe("intent compilation comparator normalization", () => {
           severity: "hard",
         },
       ],
-    }, "GROQ", "test-model", "Return window must be no more than 14 days.")).toThrow(/unsupported comparator/);
+    }, "MODEL", "test-model", "Return window must be no more than 14 days.")).toThrow(/unsupported comparator/);
   });
 });
 
@@ -116,7 +116,7 @@ describe("catalog item-price caps stay distinct from landed totals", () => {
       ],
       assumptions: [],
       unverifiedRequirements: [],
-    }, "GROQ", "test-model", wirelessMouseIntent);
+    }, "MODEL", "test-model", wirelessMouseIntent);
 
     expect(compilation.pact.maxTotalAmount).toBeUndefined();
     expect(compilation.pact.constraints.find((rule) => rule.field === "total")).toBeUndefined();
@@ -154,7 +154,7 @@ describe("unqualified product price limits default to catalog item price", () =>
       ],
       assumptions: [],
       unverifiedRequirements: [],
-    }, "GROQ", "test-model", "Find airpods less than $100");
+    }, "MODEL", "test-model", "Find airpods less than $100");
 
     expect(compilation.pact.maxTotalAmount).toBeUndefined();
     expect(compilation.pact.constraints.find((rule) => rule.field === "total")).toBeUndefined();

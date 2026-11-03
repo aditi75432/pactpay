@@ -76,6 +76,8 @@ const GATE_REASON_COPY: Record<string, string> = {
   EVIDENCE_NOT_ATTRIBUTABLE: "The proof could not be tied to this exact offer.",
   EVIDENCE_CONFLICT: "Two sources disagree about this offer.",
   SECURITY_GATE_BLOCKED: "The seller's content tried to give the agent instructions, so it was treated as untrusted.",
+  CHECKOUT_INSPECTION_BLOCKED: "The real checkout page didn't match what you approved (a hidden charge, a rule broken, or text aimed at the agent).",
+  CHECKOUT_INSPECTION_UNVERIFIED: "The real checkout page couldn't be verified, so PactPay didn't take the risk.",
 };
 
 function gateReasonCopy(code: string): string {

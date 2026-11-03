@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PurchasePact } from "@pactpay/pact-core";
 import { previewChannel3TestQuote } from "@pactpay/pact-core/settlement-demo";
-import { applyCheckoutQuote } from "@pactpay/pact-core/checkout-quote";
+import { applyCheckoutQuote, quoteRulesFor } from "@pactpay/pact-core/checkout-quote";
 import { describeAutonomy, shouldAutoHold, type Autonomy } from "@pactpay/pact-core/autonomy";
 import { logEvent, readAutonomy, readExcluded } from "../components/agentLog";
 import { offerKey } from "@pactpay/pact-core/seller-world";
@@ -198,7 +198,7 @@ export default function ShoppingAgentPage() {
           });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error ?? "Policy evaluation failed.");
-          const evaluation = applyCheckoutQuote(payload as EvalResult, { price: offer.price, currency: offer.currency }, pact?.constraints ?? []);
+          const evaluation = applyCheckoutQuote(payload as EvalResult, { price: offer.price, currency: offer.currency }, pact ? quoteRulesFor(pact) : []);
           evaluated.push({ offer, evaluation, verdict: verdictFor(evaluation), relevance: relevanceScore(offer, query), refreshed: false, refreshStatus: "Not refreshed", reason: "Evaluation complete; currentness not yet re-confirmed." });
         } catch (caught) {
           evaluated.push({
@@ -239,7 +239,7 @@ export default function ShoppingAgentPage() {
           });
           const evalPayload = await evalResponse.json();
           if (!evalResponse.ok) throw new Error(evalPayload.error ?? "Refreshed snapshot evaluation failed.");
-          const freshEvaluation = applyCheckoutQuote(evalPayload as EvalResult, { price: refreshedOffer.price, currency: refreshedOffer.currency }, pact?.constraints ?? []);
+          const freshEvaluation = applyCheckoutQuote(evalPayload as EvalResult, { price: refreshedOffer.price, currency: refreshedOffer.currency }, pact ? quoteRulesFor(pact) : []);
           const freshCandidate: Candidate = {
             offer: refreshedOffer,
             evaluation: freshEvaluation,

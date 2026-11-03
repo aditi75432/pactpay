@@ -26,6 +26,11 @@
     "./untrusted-text": "./src/untrusted-text.ts",
     "./seller-world": "./src/seller-world.ts",
     "./agent-key": "./src/agent-key.ts",
-    "./password": "./src/password.ts"
+    "./password": "./src/password.ts",
+    "./ai-labels": "./src/ai-labels.ts",
+    "./checkout-inspection": "./src/checkout-inspection.ts",
+    "./inspection-samples": "./src/inspection-samples.ts",
+    "./agent-loop": "./src/agent-loop.ts",
+    "./wav": "./src/wav.ts"
   }
 }
