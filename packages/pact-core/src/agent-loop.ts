@@ -40,6 +40,8 @@ export type AgentEvent =
 
 export interface AgentLoopOptions {
   system: string;
+  /** Trusted server-generated context, such as a deterministic shortlist prepared before the model starts. */
+  context?: string;
   task: string;
   tools: readonly AgentToolSpec[];
   chat: (messages: readonly ChatMessage[], tools: readonly AgentToolSpec[]) => Promise<AssistantMessage>;
@@ -85,7 +87,11 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   const maxCalls = options.maxCallsPerTurn ?? 3;
   const maxChars = options.maxToolChars ?? 6000;
   const known = new Set(options.tools.map((tool) => tool.name));
-  const messages: ChatMessage[] = [{ role: "system", content: options.system }, { role: "user", content: options.task }];
+  const messages: ChatMessage[] = [
+    { role: "system", content: options.system },
+    ...(options.context?.trim() ? [{ role: "system" as const, content: options.context.trim() }] : []),
+    { role: "user", content: options.task },
+  ];
   const emit = (event: AgentEvent) => options.onEvent?.(event);
   let finalText = "";
 

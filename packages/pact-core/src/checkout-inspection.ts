@@ -109,8 +109,15 @@ export function inspectionRulesFor(pact: {
     if (expected === null) continue;
     rules.push({ id: rule.id, label: rule.description ?? rule.id, hard: rule.severity === "hard", field, comparator: rule.comparator, expected });
   }
-  if (typeof pact.maxTotalAmount === "number" && !rules.some((rule) => rule.field === "total" && rule.comparator === "lte")) {
-    rules.push({ id: "system.budget_cap", label: "Total must stay within your maximum budget", hard: true, field: "total", comparator: "lte", expected: pact.maxTotalAmount });
+  if (typeof pact.maxTotalAmount === "number" && Number.isFinite(pact.maxTotalAmount) && pact.maxTotalAmount >= 0) {
+    // A softer or looser user-authored rule must never suppress the immutable system budget cap.
+    const alreadyStricter = rules.some((rule) =>
+      rule.field === "total" && rule.comparator === "lte" && rule.hard &&
+      typeof rule.expected === "number" && rule.expected <= pact.maxTotalAmount!,
+    );
+    if (!alreadyStricter) {
+      rules.push({ id: "system.budget_cap", label: "Total must stay within your maximum budget", hard: true, field: "total", comparator: "lte", expected: pact.maxTotalAmount });
+    }
   }
   return rules;
 }
@@ -157,11 +164,27 @@ const feesTotal = (reading: CheckoutReading): number => reading.otherFees.reduce
  * line the other didn't, or the currencies differ (including one being unreadable), they disagree.
  */
 export function readingsAgree(a: CheckoutReading, b: CheckoutReading): boolean {
-  if (!a.readable || !b.readable) return false;
-  if (a.total === null || b.total === null) return false;
+  if (!a.readable || !b.readable || a.total === null || b.total === null) return false;
   if (!sameMoney(a.total, b.total) || !sameMoney(a.itemPrice, b.itemPrice) || !sameMoney(a.shipping, b.shipping) || !sameMoney(a.tax, b.tax)) return false;
-  if (!sameMoney(feesTotal(a), feesTotal(b))) return false;
-  return (a.currency ?? null) === (b.currency ?? null);
+  if (!a.currency || !b.currency || a.currency !== b.currency) return false;
+  const normalizeText = (value: string | null) => (value ?? "").trim().toLocaleLowerCase().replace(/\s+/g, " ");
+  const merchantIdentity = (value: string | null) => {
+    if (!value) return "";
+    let normalized = normalizeText(value).replace(/^https?:\/\//, "").replace(/^www\./, "").split(/[/?#]/, 1)[0] ?? "";
+    normalized = normalized.replace(/\.(?:com|org|net|co|io|store|shop|us|uk|ca|in|de|fr|au)(?:\.[a-z]{2})?$/i, "");
+    normalized = normalized.replace(/\b(incorporated|inc|limited|ltd|llc|corp|corporation)\b/g, "");
+    return normalized.replace(/[^a-z0-9]/g, "");
+  };
+  const merchantA = merchantIdentity(a.merchant);
+  const merchantB = merchantIdentity(b.merchant);
+  if (!merchantA || !merchantB || merchantA !== merchantB) return false;
+  // Delivery and return terms are checked against the approved Pact row-by-row below. A reader missing an
+  // unrelated optional field must not invalidate an otherwise identical financial reading.
+  const feeKey = (fee: { label: string; amount: number }) => `${normalizeText(fee.label)}|${fee.amount.toFixed(2)}`;
+  const feesA = a.otherFees.map(feeKey).sort();
+  const feesB = b.otherFees.map(feeKey).sort();
+  if (feesA.length !== feesB.length || feesA.some((value, index) => value !== feesB[index])) return false;
+  return true;
 }
 
 function describeObserved(value: number | string | null, field: InspectionField): string {
@@ -179,19 +202,20 @@ function describeExpected(rule: InspectionRule): string {
 function arithmeticOf(reading: CheckoutReading): Inspection["arithmetic"] {
   const checkable = reading.total !== null && reading.itemPrice !== null;
   const complete = reading.shipping !== null && reading.tax !== null;
-  // A missing shipping or tax line is "not shown", never "zero": it is only treated as zero when the numbers still add up.
+  // Missing shipping or tax is unknown even when the visible subtotal happens to equal the total.
+  // Only an explicitly displayed zero is evidence of a zero charge.
   const itemsSum = checkable ? Math.round(((reading.itemPrice ?? 0) + (reading.shipping ?? 0) + (reading.tax ?? 0) + feesTotal(reading)) * 100) / 100 : null;
   const gap = checkable && itemsSum !== null && reading.total !== null ? Math.round((reading.total - itemsSum) * 100) / 100 : null;
   const gapFound = gap !== null && Math.abs(gap) > 0.02;
-  const incomplete = gapFound && !complete;
+  const incomplete = !complete;
   return {
     checked: checkable, ok: !gapFound, incomplete, statedTotal: reading.total, itemsSum, gap,
     note: !checkable
       ? "Not enough line items were shown to check the total."
-      : !gapFound
-        ? "The itemized charges add up to the total."
-        : incomplete
-          ? `The total is ${gap! > 0 ? "higher" : "lower"} than the lines shown by ${Math.abs(gap!).toFixed(2)}, and a shipping or tax line wasn't shown, so this can't be told apart from a hidden fee.`
+      : incomplete
+        ? "Shipping or tax wasn't shown. Missing charges are unknown, not zero."
+        : !gapFound
+          ? "The itemized charges add up to the total."
           : `The total is ${gap! > 0 ? "higher" : "lower"} than its line items by ${Math.abs(gap!).toFixed(2)}. Something isn't itemized.`,
   };
 }
@@ -205,7 +229,17 @@ const EXTRA_OVERRIDE = /\b(ignore|disregard|forget|override|bypass|skip)\b[^.!?\
 export function checkoutInjectionFindings(reading: CheckoutReading): InjectionFinding[] {
   const text = hostileTextOf(reading);
   const found: InjectionFinding[] = [];
-  if (reading.addressedToAI === true) found.push({ rule: "reader-flagged", excerpt: (reading.aiAddressedText ?? "Text on the page is addressed to an AI agent.").slice(0, 160) });
+  const normalize = (value: string) => value.normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+  const quotedText = reading.aiAddressedText ? normalize(reading.aiAddressedText) : "";
+  const visiblePageText = reading.pageNotes.map(normalize).join(" ");
+  // Treat a model's semantic flag as evidence only when its claimed quotation is
+  // corroborated by text actually transcribed from the checkout. This prevents a
+  // generic or hallucinated model flag from rejecting an otherwise ordinary page.
+  // The independent pattern scanner below still catches visible hostile instructions
+  // even when a reader does not set addressedToAI.
+  if (reading.addressedToAI === true && quotedText && visiblePageText.includes(quotedText)) {
+    found.push({ rule: "reader-flagged", excerpt: reading.aiAddressedText!.slice(0, 160) });
+  }
   const scanned = scanUntrustedText(text);
   const normalized = text.replace(/\s+/g, " ");
   if (EXTRA_OVERRIDE.test(normalized) && !scanned.some((item) => item.rule === "override-instructions")) {
@@ -242,13 +276,20 @@ export function inspectCheckout(reading: CheckoutReading, rules: readonly Inspec
     return { ruleId: rule.id, label: rule.label, hard: rule.hard, expected: describeExpected(rule), observed: shown, status };
   });
 
-  // The itemized lines must add up to the total, in EITHER reading.
+  // The itemized lines must add up to the total. Two-reader disagreement is unverified, not safe.
   const arithmeticA = arithmeticOf(reading);
   const arithmeticB = second ? arithmeticOf(second) : null;
   const arithmetic = arithmeticB && (!arithmeticB.ok && arithmeticA.ok) ? arithmeticB : arithmeticA;
-  const hiddenFee = [arithmeticA, arithmeticB].some((item) => item !== null && !item.ok && !item.incomplete);
-  const incomplete = [arithmeticA, arithmeticB].some((item) => item !== null && item.incomplete);
-  const arithmeticOk = !hiddenFee && !incomplete;
+  const gapA = arithmeticA.checked && !arithmeticA.ok && !arithmeticA.incomplete;
+  const gapB = arithmeticB ? arithmeticB.checked && !arithmeticB.ok && !arithmeticB.incomplete : false;
+  // One reader's arithmetic gap may be an OCR error. It blocks capture as CANNOT_VERIFY until both
+  // independent readings confirm it, avoiding contradictory reject/approve decisions on repeated reads.
+  const hiddenFee = arithmeticB ? gapA && gapB : gapA;
+  const arithmeticDisagrees = arithmeticB !== null && (
+    gapA !== gapB || arithmeticA.checked !== arithmeticB.checked || arithmeticA.incomplete !== arithmeticB.incomplete
+  );
+  const incomplete = [arithmeticA, arithmeticB].some((item) => item !== null && (!item.checked || item.incomplete)) || arithmeticDisagrees;
+  const arithmeticOk = !hiddenFee && !incomplete && arithmeticA.ok && (arithmeticB?.ok ?? true);
 
   // Text aimed at an AI is checked in BOTH readings, so a reader that skipped it can't hide it.
   // Two tripwires: the reader's own semantic judgement, and a pattern scan that ignores ordinary shop banners.
@@ -264,7 +305,8 @@ export function inspectCheckout(reading: CheckoutReading, rules: readonly Inspec
   const hardUnknown = rows.filter((row) => row.hard && row.status === "unknown");
   for (const row of hardFail) reasons.push(`${row.label}: the page shows ${row.observed}, but you approved ${row.expected}.`);
   if (hiddenFee) reasons.push((arithmeticA.ok ? arithmeticB! : arithmeticA).note);
-  else if (incomplete) reasons.push((arithmeticA.incomplete ? arithmeticA : arithmeticB!).note);
+  else if (arithmeticDisagrees) reasons.push("The two readers disagreed about the itemized charges. The checkout cannot be verified yet.");
+  else if (incomplete) reasons.push((!arithmeticA.checked || arithmeticA.incomplete) ? arithmeticA.note : arithmeticB!.note);
   if (injection.length > 0) reasons.push(`The page contains text aimed at an AI agent${injectionReaders.length === 1 ? ` (seen by reader ${injectionReaders[0]})` : ""}. It was treated as hostile and ignored.`);
   for (const row of hardUnknown) reasons.push(`${row.label}: the page doesn't show this clearly, or the two readings disagree, so it can't be confirmed.`);
   if (!reading.readable || (second && !second.readable)) reasons.push("The image doesn't look like a readable checkout page.");

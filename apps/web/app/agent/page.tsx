@@ -25,5 +25,5 @@ export default function AgentStep() {
 
   if (mode === "loading") return null;
   if (mode === "classic") return <ClassicAgent />;
-  return <MuseAgent searchQuery={query || "product"} onUseClassic={() => { const url = new URL(window.location.href); url.searchParams.set("mode", "classic"); window.location.href = url.toString(); }} />;
+  return <MuseAgent searchQuery={query} onUseClassic={() => { const url = new URL(window.location.href); url.searchParams.set("mode", "classic"); window.location.href = url.toString(); }} />;
 }

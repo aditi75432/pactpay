@@ -27,6 +27,47 @@ function cleanString(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
+const QUERY_FILLER = new Set([
+  "find", "show", "search", "looking", "look", "for", "me", "my", "i", "want", "need", "buy", "get", "please", "can", "you", "could", "would", "like", "to",
+  "a", "an", "the", "best", "option", "options", "product", "products", "item", "items", "with", "and", "or", "that", "has", "have",
+  "under", "below", "less", "than", "at", "most", "up", "to", "budget", "maximum", "max", "price", "priced",
+  "cost", "costs", "dollar", "dollars", "rupee", "rupees", "usd", "inr", "eur", "gbp", "only", "within",
+]);
+
+/**
+ * Build product-focused Channel3 query variants. These affect retrieval only; the approved Purchase Pact is never
+ * changed. The third, broader variant drops standalone capacity/dimension descriptors but preserves model numbers
+ * such as WH-1000XM5, S24, M3 and product-generation names.
+ */
+export function buildChannel3SearchQueries(input: string): string[] {
+  const original = input.replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
+  if (!original) return [];
+  let productQuery = original
+    .replace(/\b(?:under|below|less than|at most|no more than|up to|within|budget(?: of)?|maximum(?: budget)?|price limit(?: of)?)\s*[$€£₹]?\s*\d[\d,]*(?:\.\d+)?\s*(?:usd|eur|gbp|inr|rupees?|dollars?)?\b/gi, " ")
+    .replace(/[$€£₹]\s*\d[\d,]*(?:\.\d+)?(?:\s*(?:usd|eur|gbp|inr))?/gi, " ")
+    .replace(/\b\d[\d,]*(?:\.\d+)?\s*(?:usd|eur|gbp|inr|rupees?|dollars?)\b/gi, " ")
+    .replace(/^\s*(?:please\s+)?(?:can you\s+)?(?:find|search for|look for|show me|buy|get)\s+/i, "")
+    .replace(/^\s*(?:i want|i need|i am looking for|i'm looking for|i would like)\s+(?:to buy\s+)?/i, "")
+    .replace(/^\s*(?:a|an|the)\s+/i, "")
+    .replace(/\b(?:prefer|preferred brand)\s+/gi, " ")
+    .replace(/[,:;]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!productQuery) productQuery = original;
+
+  const variants = [productQuery];
+  const tokens = productQuery.match(/[a-z0-9]+(?:[.-][a-z0-9]+)*/gi) ?? [];
+  const compact = tokens.filter((token) => !QUERY_FILLER.has(token.toLowerCase())).join(" ").trim();
+  if (compact && compact.toLowerCase() !== productQuery.toLowerCase() && compact.length >= 2) variants.push(compact);
+
+  // Broader retrieval is allowed; policy evaluation still uses every original hard rule.
+  // Keep model identifiers while omitting separate capacity/dimension values that often over-constrain catalog search.
+  const broad = compact
+    .replace(/\b\d+(?:[.,]\d+)?\s*(?:gb|gib|tb|tib|inch(?:es)?|inches|cm|mm|watts?|w|mah|hz|mp)\b/gi, " ")
+    .replace(/\s+/g, " ").trim();
+  if (broad.length >= 3 && broad.toLowerCase() !== compact.toLowerCase()) variants.push(broad);
+
+  return [...new Map(variants.filter((value) => value.length >= 2 && value.length <= 180).map((value) => [value.toLowerCase(), value])).values()].slice(0, 3);
+}
+
 function finiteNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim()) {
@@ -50,17 +91,38 @@ function safeHttpsUrl(value: unknown): string | null {
 function normalizeAvailability(value: unknown): string | null {
   const text = cleanString(value);
   if (!text) return null;
-  if (text.toLowerCase() === "instock") return "InStock";
-  if (text.toLowerCase() === "outofstock") return "OutOfStock";
+  const normalized = text.toLowerCase().replace(/[\s_-]+/g, "");
+  if (["instock", "available", "limitedavailability", "lowstock", "limitedstock", "fewleft"].includes(normalized)) return "InStock";
+  if (["outofstock", "unavailable", "soldout", "discontinued"].includes(normalized)) return "OutOfStock";
   return text;
 }
 
 function normalizeCondition(value: unknown): string | null {
   const text = cleanString(value);
   if (!text) return null;
-  const normalized = text.toLowerCase();
-  if (["new", "used", "refurbished"].includes(normalized)) return normalized;
+  const normalized = text.toLowerCase().replace(/[\s_-]+/g, "");
+  if (["new", "brandnew"].includes(normalized)) return "new";
+  if (["used", "preowned", "preownedused"].includes(normalized)) return "used";
+  if (["refurbished", "manufacturerrefurbished", "sellerrefurbished"].includes(normalized)) return "refurbished";
   return text;
+}
+
+function attributeValue(attributes: Record<string, unknown>, patterns: RegExp[]): unknown {
+  for (const [key, value] of Object.entries(attributes)) {
+    const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (patterns.some((pattern) => pattern.test(normalized))) return value;
+  }
+  return null;
+}
+
+function attributeText(value: unknown): string | null {
+  if (typeof value === "string" || typeof value === "number") return cleanString(String(value));
+  if (!isRecord(value)) return null;
+  for (const key of ["value", "name", "label", "text", "display_value"]) {
+    const text = cleanString(value[key]);
+    if (text) return text;
+  }
+  return null;
 }
 
 /** Read RAM only from structured catalog attributes; deliberately never infer it from title/description. */
@@ -85,15 +147,28 @@ export function extractRamGb(attributes: Record<string, unknown>): number | null
   return null;
 }
 
-function readImageUrl(product: Record<string, unknown>): string | null {
+function readImageUrl(product: Record<string, unknown>, attributes: Record<string, unknown>): string | null {
   const images = Array.isArray(product.images) ? product.images : [];
   const imageObjects = images.filter(isRecord);
   const main = imageObjects.find((image) => image.is_main_image === true) ?? imageObjects[0];
-  if (!main) return safeHttpsUrl(product.image_url);
-  return safeHttpsUrl(main.cleaned_url) ?? safeHttpsUrl(main.url) ?? safeHttpsUrl(product.image_url);
+  const candidates: unknown[] = [
+    main?.cleaned_url, main?.url,
+    product.image_url, product.primary_image_url, product.thumbnail_url,
+    isRecord(product.primary_image) ? product.primary_image.cleaned_url ?? product.primary_image.url : product.primary_image,
+    attributeValue(attributes, [/^image$/, /^imageurl$/, /^productimage$/, /^thumbnailurl$/]),
+    ...images.filter((image) => typeof image === "string"),
+  ];
+  for (const candidate of candidates) {
+    const direct = safeHttpsUrl(candidate);
+    if (direct) return direct;
+    const nested = attributeText(candidate);
+    const nestedUrl = safeHttpsUrl(nested);
+    if (nestedUrl) return nestedUrl;
+  }
+  return null;
 }
 
-function readBrand(product: Record<string, unknown>): string | null {
+function readBrand(product: Record<string, unknown>, attributes: Record<string, unknown>): string | null {
   const brands = Array.isArray(product.brands) ? product.brands : [];
   for (const value of brands) {
     if (isRecord(value)) {
@@ -104,7 +179,7 @@ function readBrand(product: Record<string, unknown>): string | null {
       if (name) return name;
     }
   }
-  return cleanString(product.brand);
+  return cleanString(product.brand) ?? attributeText(attributeValue(attributes, [/^brand$/, /^manufacturer$/, /^brandname$/]));
 }
 
 /**
@@ -147,14 +222,14 @@ export function normalizeChannel3SearchResponse(payload: unknown): Channel3Norma
         productId,
         productTitle,
         description: cleanString(candidate.description),
-        brand: readBrand(candidate),
-        imageUrl: readImageUrl(candidate),
+        brand: readBrand(candidate, attributes),
+        imageUrl: readImageUrl(candidate, attributes),
         offerDomain,
         offerUrl,
         price: amount,
         currency: currencyRaw,
-        availability: normalizeAvailability(offerCandidate.availability),
-        condition: normalizeCondition(offerCandidate.condition),
+        availability: normalizeAvailability(offerCandidate.availability ?? attributeText(attributeValue(attributes, [/^availability$/, /^stockstatus$/, /^inventorystatus$/, /^instock$/]))),
+        condition: normalizeCondition(offerCandidate.condition ?? attributeText(attributeValue(attributes, [/^condition$/, /^itemcondition$/, /^productcondition$/]))),
         ramGb: extractRamGb(attributes),
         structuredAttributes: attributes,
         rawProduct,

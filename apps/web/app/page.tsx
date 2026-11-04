@@ -178,7 +178,7 @@ export default function Home() {
         <p className="pp-eyebrow">Safer shopping with AI agents</p>
         <h1 className="pp-h1" style={{ marginTop: 14, maxWidth: 14 + "em" }}>Let your AI agent shop. Keep the final say.</h1>
         <p className="pp-lede" style={{ marginTop: 18 }}>
-          Say what you want. A Meta Muse agent shops for you, PayPal holds the money, and two Muse models read the real checkout page before anything is paid. A fixed gate, not an AI, decides whether the money moves. If anything is off, the hold is cancelled and you aren&apos;t charged.
+          Say what you want. A Meta Muse agent shops for you, PayPal holds the money, and Muse reads the Sandbox checkout evidence twice. Fixed rules, not an AI, decide whether the payment can move.
         </p>
       </section>
 

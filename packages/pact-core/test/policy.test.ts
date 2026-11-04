@@ -138,6 +138,27 @@ describe("deterministic pact evaluator", () => {
     expect(decideSettlement(verification).decision).toBe("block");
   });
 
+  it("matches equivalent in-stock spellings without relaxing the availability rule", () => {
+    const pact = makePact();
+    pact.constraints.push({
+      id: "availability",
+      kind: "attribute",
+      severity: "hard",
+      description: "Offer must be in stock.",
+      expected: "in_stock",
+      comparator: "eq",
+      field: "attributes.availability",
+    });
+    const offer = makeOffer({ attributes: { ramGb: 16, brand: "Dell", availability: "InStock" } });
+    const availabilityEvidence = offer.evidence.find((item) => item.field === "attributes.availability");
+    if (availabilityEvidence) availabilityEvidence.value = "in stock";
+    else offer.evidence.push(evidenceFor(offer.id, "attributes.availability", "in stock"));
+
+    const verification = evaluate(pact, offer);
+    expect(verification.results.find((result) => result.constraintId === "availability")?.status).toBe("pass");
+    expect(decideSettlement(verification).decision).toBe("capture");
+  });
+
   it("blocks currency mismatch", () => {
     const verification = evaluate(makePact(), makeOffer({ currency: "INR" }));
     expect(verification.results.find((result) => result.constraintId === "system.currency_match")?.status).toBe("fail");

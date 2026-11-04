@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { normalizeChannel3SearchResponse } from "@pactpay/pact-core/channel3";
+import { buildChannel3SearchQueries, normalizeChannel3SearchResponse } from "@pactpay/pact-core/channel3";
 import { storeChannel3OfferSnapshots } from "../../../../../../lib/db";
 import { enforceRateLimit } from "../../../../lib/request-guard";
 import { requireLogin } from "../../../../lib/session";
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 const CHANNEL3_SEARCH_URL = "https://api.trychannel3.com/v1/search";
 const MAX_QUERY_LENGTH = 180;
-const MAX_RESULTS = 12;
+const MAX_RESULTS = 30;
 const EVIDENCE_TTL_MS = 10 * 60_000;
 
 export async function POST(request: Request) {
@@ -36,43 +36,73 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Channel3 is not configured. Add CHANNEL3_API_KEY to apps/web/.env.local and restart the server." }, { status: 503 });
   }
 
-  let channel3Payload: unknown;
-  try {
-    const response = await fetch(CHANNEL3_SEARCH_URL, {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query, limit: MAX_RESULTS }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(12_000),
-    });
+  // Preserve the complete buyer brief for Channel3's agentic planner, then run
+  // product-focused lexical/semantic variants for recall. These are retrieval
+  // strategies only; all results still face the unchanged approved Purchase Pact.
+  const productQueries = buildChannel3SearchQueries(query);
+  const searchPlans = [
+    { query, mode: "agentic" as const },
+    ...productQueries.map((value) => ({ query: value, mode: "default" as const })),
+  ].filter((item, index, all) => all.findIndex((other) => other.query.toLowerCase() === item.query.toLowerCase()) === index).slice(0, 4);
+  if (searchPlans.length === 0) return NextResponse.json({ error: "Enter a product name or useful search phrase." }, { status: 400 });
 
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        return NextResponse.json({ error: "Channel3 rejected the API key. Check the server-side CHANNEL3_API_KEY setting." }, { status: 502 });
-      }
-      if (response.status === 429) {
-        return NextResponse.json({ error: "Channel3 rate limit or search quota reached. Wait or check your Channel3 usage." }, { status: 429 });
-      }
-      console.error("Channel3 search returned HTTP status", response.status);
-      return NextResponse.json({ error: `Channel3 search failed with HTTP ${response.status}.` }, { status: 502 });
+  const apiResults = await Promise.all(searchPlans.map(async (plan) => {
+    const searchQuery = plan.query;
+    try {
+      const response = await fetch(CHANNEL3_SEARCH_URL, {
+        method: "POST",
+        headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ query: searchQuery, limit: MAX_RESULTS, ...(plan.mode === "agentic" ? { config: { mode: "agentic" } } : {}) }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!response.ok) return { query: searchQuery, status: response.status, payload: null as unknown };
+      return { query: searchQuery, status: response.status, payload: await response.json() as unknown };
+    } catch (error) {
+      const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+      return { query: searchQuery, status: timeout ? 504 : 502, payload: null as unknown };
     }
-    channel3Payload = await response.json();
-  } catch (error) {
-    const isTimeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-    console.error("Channel3 search request failed", error instanceof Error ? error.name : "unknown error");
-    return NextResponse.json({ error: isTimeout ? "Channel3 search timed out. Please retry." : "Channel3 could not be reached. Please retry." }, { status: isTimeout ? 504 : 502 });
+  }));
+
+  const successful = apiResults.filter((result) => result.status >= 200 && result.status < 300 && result.payload !== null);
+  if (successful.length === 0) {
+    const failedStatus = apiResults.find((result) => result.status === 401 || result.status === 403)?.status
+      ?? apiResults.find((result) => result.status === 429)?.status
+      ?? apiResults.find((result) => result.status === 504)?.status
+      ?? 502;
+    const message = failedStatus === 401 || failedStatus === 403
+      ? "Channel3 rejected the API key. Check the server-side CHANNEL3_API_KEY setting."
+      : failedStatus === 429
+        ? "Channel3 rate limit or search quota reached. Wait or check your Channel3 usage."
+        : failedStatus === 504
+          ? "Channel3 search timed out. Please retry."
+          : "Channel3 could not be reached or returned no usable response. Please retry.";
+    console.error("All Channel3 search variants failed", apiResults.map((result) => result.status));
+    return NextResponse.json({ error: message }, { status: failedStatus });
   }
 
-  let offers;
-  try {
-    offers = normalizeChannel3SearchResponse(channel3Payload);
-  } catch (error) {
-    console.error("Channel3 response schema was not recognized", error instanceof Error ? error.message : "unknown error");
+  const uniqueOffers = new Map<string, ReturnType<typeof normalizeChannel3SearchResponse>[number]>();
+  const validQueries: string[] = [];
+  for (const result of successful) {
+    try {
+      const normalized = normalizeChannel3SearchResponse(result.payload);
+      validQueries.push(result.query);
+      for (const offer of normalized) {
+        let path = offer.offerUrl;
+        try { const url = new URL(offer.offerUrl); path = `${url.hostname.toLowerCase()}${url.pathname.replace(/\/+$/, "")}`; } catch { /* normalized URLs are already HTTPS */ }
+        const key = `${offer.productId}|${offer.offerDomain.toLowerCase()}|${path}`;
+        if (!uniqueOffers.has(key)) uniqueOffers.set(key, offer);
+      }
+    } catch (error) {
+      console.error("Channel3 search variant had an unrecognized response", result.query, error instanceof Error ? error.message : "unknown error");
+    }
+  }
+  if (validQueries.length === 0) {
     return NextResponse.json({ error: "Channel3 returned an unexpected response format. No results were evaluated." }, { status: 502 });
   }
+  // Keep a broad candidate set for deterministic filtering. The shortlist stage,
+  // not the retrieval query, decides which products satisfy the user's rules.
+  const offers = [...uniqueOffers.values()].slice(0, MAX_RESULTS * validQueries.length);
 
   const fetchedAt = new Date();
   const validUntil = new Date(fetchedAt.getTime() + EVIDENCE_TTL_MS);
@@ -113,13 +143,15 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     query,
+    searchQueries: validQueries,
     source: "CHANNEL3_LIVE_SEARCH",
+    searchModes: searchPlans.map((plan) => ({ query: plan.query, mode: plan.mode })),
     fetchedAt: fetchedAt.toISOString(),
     freshnessWindowSeconds: EVIDENCE_TTL_MS / 1000,
     offers: snapshots.map(({ rawProduct: _rawProduct, rawOffer: _rawOffer, structuredAttributes, ...offer }) => ({
       ...offer,
       structuredAttributes,
     })),
-    note: "These are live catalog offer observations. The 60-second TTL is PactPay's local freshness policy, not a claim about the merchant's own update timestamp. Item price is not the landed total.",
+    note: "These are live catalog offer observations. The 10-minute TTL is PactPay's local freshness policy, not a claim about the merchant's own update timestamp. Item price is not the landed total. Search variants only improve product discovery; every offer is evaluated against the unchanged approved Purchase Pact.",
   });
 }

@@ -188,7 +188,7 @@ export default function OrderPage() {
       if (!pageResponse.ok || !pagePayload.svg || !pagePayload.width || !pagePayload.height || !pagePayload.page) throw new Error(pagePayload.error ?? "Couldn't load the checkout page.");
       const png = await svgToPngDataUrl(pagePayload.svg, pagePayload.width, pagePayload.height);
       setPageImage({ src: png, merchant: pagePayload.page.merchant, variant: pagePayload.page.variant });
-      setInspecting("Two Meta Muse models are reading the page independently…");
+      setInspecting("Two independent Meta model readings are checking the Sandbox checkout evidence…");
       const response = await fetch("/api/inspector/checkout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvalId: approvalIdForInspection, image: png, transactionId }) });
       const payload = await response.json() as InspectionPayload & { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "The inspection failed.");
@@ -520,7 +520,7 @@ export default function OrderPage() {
         <section className="pp-card pp-enter" aria-label="Checkout inspection">
           <div className="pp-card-head">
             <div>
-              <h2 className="pp-h3">Muse reads the real checkout page <span className="pp-muse-chip" style={{ marginLeft: 6, fontSize: 11.5 }}>Meta Muse vision</span></h2>
+              <h2 className="pp-h3">Muse reads the Sandbox checkout evidence <span className="pp-muse-chip" style={{ marginLeft: 6, fontSize: 11.5 }}>Meta Muse vision</span></h2>
               <p className="pp-small pp-muted" style={{ marginTop: 4 }}>Two independent Meta readings of the page. Fixed rules decide if it matches what you approved. The settlement gate reads this verdict: anything but Safe to pay blocks the capture.</p>
             </div>
             {inspecting ? <span className="pp-badge pp-badge-info"><span className="pp-spinner pp-spinner-dark" aria-hidden="true" /> Inspecting</span>
@@ -542,12 +542,18 @@ export default function OrderPage() {
               {inspectError && (
                 <div className="pp-callout pp-callout-warn" role="alert">
                   <p style={{ fontWeight: 700 }}>The inspection couldn&apos;t finish.</p>
-                  <p className="pp-small" style={{ marginTop: 4 }}>{inspectError} Nothing was decided. Without a verdict the other gate checks still apply.</p>
+                  <p className="pp-small" style={{ marginTop: 4 }}>{inspectError} The payment remains blocked until the checkout can be verified.</p>
                   {heldNow && <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" style={{ marginTop: 10 }} onClick={() => void runInspection("faithful")}>Inspect again</button>}
                 </div>
               )}
             </div>
           </div>
+          {heldNow && !inspecting && stored?.outcome === "CANNOT_VERIFY" && (
+            <div className="pp-row" style={{ marginTop: 14 }}>
+              <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => void runInspection(pageImage?.variant === "hostile" ? "hostile" : "faithful")}>Read this checkout again</button>
+              <span className="pp-tiny pp-muted">Unclear readings can be retried. Payment stays blocked until the evidence is verified.</span>
+            </div>
+          )}
           {heldNow && !inspecting && (inspection || stored) && (
             <div className="pp-row" style={{ marginTop: 14 }}>
               <button type="button" className="pp-link-btn" onClick={() => void runInspection(pageImage?.variant === "hostile" ? "faithful" : "hostile")}>{pageImage?.variant === "hostile" ? "Re-inspect the honest page" : "Simulate: what if the seller turns hostile?"}</button>

@@ -88,6 +88,23 @@ describe("rule-based fallback regex capture handling", () => {
 });
 
 
+
+  it("normalizes underscored stock values from approved rules to the catalog enum", () => {
+    const sanitized = sanitizePurchasePact({
+      id: "stock-normalization",
+      currency: "USD",
+      constraints: [{
+        id: "stock",
+        description: "Offer must be in stock.",
+        field: "attributes.availability",
+        comparator: "eq",
+        expected: "in_stock",
+        severity: "hard",
+      }],
+    });
+    expect(sanitized.constraints.find((rule) => rule.id === "stock")?.expected).toBe("InStock");
+  });
+
 describe("catalog item-price caps stay distinct from landed totals", () => {
   const wirelessMouseIntent = "Find a wireless mouse with a catalog item price under $50 USD, in stock. Prefer Logitech.";
 

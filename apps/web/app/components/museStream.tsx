@@ -2,6 +2,7 @@
 
 export type Ev =
   | { type: "start"; modelLabel: string; model: string; openWeights: boolean; autonomy: string }
+  | { type: "catalog"; data: Record<string, unknown> }
   | { type: "model"; text: string }
   | { type: "tool_call"; id: string; name: string; args: Record<string, unknown> }
   | { type: "tool_result"; id: string; name: string; status: number; refused: boolean; data: Record<string, unknown> }
@@ -56,6 +57,7 @@ export function Timeline({ events }: { events: Ev[] }) {
     <div className="pp-timeline" aria-live="polite">
       {events.map((event, index) => {
         if (event.type === "start") return <div key={index} className="pp-ev pp-ev-model pp-enter"><div className="pp-ev-head">Model</div>{event.modelLabel} ({event.openWeights ? "open weights" : "Meta Model API"})</div>;
+        if (event.type === "catalog") return <div key={index} className="pp-ev pp-ev-good pp-enter"><div className="pp-ev-head">🛍️ Live shortlist ready</div>{Array.isArray(event.data.results) ? `${event.data.results.length} offers checked by PactPay's fixed rules. Product images and verdicts are shown below.` : typeof event.data.error === "string" ? event.data.error : "PactPay prepared the catalog results."}</div>;
         if (event.type === "model") return <div key={index} className="pp-ev pp-ev-model pp-enter"><div className="pp-ev-head">🧠 Muse says</div>{event.text}</div>;
         if (event.type === "tool_call") return <div key={index} className="pp-ev pp-ev-tool pp-enter"><div className="pp-ev-head">🔧 {TOOL_TITLES[event.name] ?? event.name} <code>{event.name}</code></div></div>;
         if (event.type === "tool_result") return (

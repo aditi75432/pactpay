@@ -82,4 +82,11 @@ describe("settlement state machine", () => {
       verifiedTotal: "90071992547409.92",
     }).reasons).toContain("AUTHORIZED_AMOUNT_DOES_NOT_MATCH_VERIFIED_TOTAL");
   });
+  it("blocks capture when the current checkout revision is missing or unverified", () => {
+    expect(evaluateSettlementGate({ ...validFacts, checkoutInspection: "unverified" }).reasons)
+      .toContain("CHECKOUT_INSPECTION_UNVERIFIED");
+    expect(evaluateSettlementGate({ ...validFacts, checkoutInspection: "blocked" }).reasons)
+      .toContain("CHECKOUT_INSPECTION_BLOCKED");
+  });
+
 });

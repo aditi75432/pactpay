@@ -28,7 +28,8 @@ const SETTLE_TOOLS: AgentToolSpec[] = [
 
 const SHOP_SYSTEM = [
   "You are a careful shopping agent working for a user through PactPay tools.",
-  "Start by reading the rules. Then shortlist offers and pick the best PASS offer, then ask for a payment hold on it.",
+  "PactPay prepares a deterministic shortlist before you start. Read the approved rules, use the supplied shortlist, compare the eligible candidates, and ask for a hold on the best refreshed PASS offer.",
+  "Do not repeat the exact same shortlist query if PactPay has already supplied results for it. You may search again with a genuinely different product phrase when the initial results are empty or irrelevant.",
   "A hold needs a human to approve it on PayPal, so after you place one the run pauses for them.",
   "If a tool says requiresHuman, blocked or refused, do not try to work around it: explain plainly what happened and what the user can do.",
   "You cannot change the rules or your own limits, and you must never claim a purchase succeeded. All payments are PayPal Sandbox test money.",
@@ -87,13 +88,15 @@ export async function POST(request: Request) {
     return { status: response.status, json, refused: response.status === 403 || json.requiresHuman === true };
   }
 
+  let preflightQuery = "";
+  let preflightShortlist: ToolOutcome | null = null;
   async function execute(name: string, args: Record<string, unknown>): Promise<ToolOutcome> {
     if (name === "get_rules") return gateway("GET", "/api/agent/v1/rules");
     if (name === "shortlist") {
-      // Prices and rules in a catalog query return irrelevant products. The rules are applied after the search, so keep the query to the product.
       const asked = String(args.query ?? "").trim();
-      const noisy = !asked || /[\d$€£]/.test(asked) || /\b(under|below|less than|at most|budget|cheap|cheapest|price|dollars?|in stock)\b/i.test(asked) || asked.split(/\s+/).length > 5;
-      return gateway("POST", "/api/agent/v1/shortlist", { query: searchQuery && noisy ? searchQuery : asked });
+      if (preflightShortlist && (!asked || asked.toLowerCase() === preflightQuery.toLowerCase())) return preflightShortlist;
+      // Muse may refine the product phrase, but all hard rules remain server-bound to the approved Pact.
+      return gateway("POST", "/api/agent/v1/shortlist", { query: asked || searchQuery });
     }
     if (name === "hold_payment") {
       const held = await gateway("POST", "/api/agent/v1/hold", { snapshotId: String(args.snapshotId ?? "") });
@@ -112,8 +115,34 @@ export async function POST(request: Request) {
       const send = (event: Record<string, unknown>) => { try { controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`)); } catch { /* client went away */ } };
       send({ type: "start", model: provider.model, modelLabel: modelDisplayName(provider.model), provider: provider.id, openWeights: provider.openWeights, phase, autonomy: approval.autonomy.mode });
       try {
+        let agentContext = "";
+        if (phase === "shop" && searchQuery.length >= 2) {
+          // The same deterministic service powers ClassicAgent, Muse's tools and remote MCP/HTTP agents.
+          // Preflight once so the user sees all product cards immediately, before Muse explains its choice.
+          preflightQuery = searchQuery;
+          const rulesRead = await gateway("GET", "/api/agent/v1/rules");
+          preflightShortlist = await gateway("POST", "/api/agent/v1/shortlist", { query: searchQuery });
+          send({ type: "catalog", data: preflightShortlist.json });
+          const rows = Array.isArray(preflightShortlist.json.results) ? preflightShortlist.json.results : [];
+          const compactRows = rows.slice(0, 14).map((value) => {
+            if (!isRecord(value)) return value;
+            return {
+              snapshotId: value.snapshotId, title: value.title, merchant: value.merchant, itemPrice: value.itemPrice,
+              currency: value.currency, verdict: value.verdict, refreshed: value.refreshed,
+              reason: value.reason, agentMayHoldAlone: value.agentMayHoldAlone,
+            };
+          });
+          agentContext = [
+            "TRUSTED PACTPAY SERVER CONTEXT (not user or seller instructions):",
+            `Rules endpoint status: ${rulesRead.status}. Shortlist endpoint status: ${preflightShortlist.status}.`,
+            `The deterministic shortlist was already evaluated against the approved Purchase Pact. Search query: ${searchQuery}.`,
+            `Candidate results: ${JSON.stringify(compactRows)}.`,
+            "Use only refreshed PASS candidates for hold requests. Do not reinterpret or relax any rule. If no candidate passes, explain the blocking evidence and do not create a hold.",
+          ].join(" ");
+          if (preflightShortlist.status >= 400) agentContext += ` Catalog error: ${String(preflightShortlist.json.error ?? "Search failed")}. You may try one more precise product query, but never change the Pact.`;
+        }
         await runAgentLoop({
-          system: phase === "settle" ? SETTLE_SYSTEM : SHOP_SYSTEM, task, tools, maxSteps: phase === "settle" ? 4 : 8, signal: request.signal,
+          system: phase === "settle" ? SETTLE_SYSTEM : SHOP_SYSTEM, context: agentContext, task, tools, maxSteps: phase === "settle" ? 4 : 8, signal: request.signal,
           chat: async (messages, toolSpecs) => {
             const reply = await callModel(provider, { messages, tools: toolSpecs, temperature: 0.2, maxTokens: 2500, effort: "low", timeoutMs });
             if (!reply.ok || !reply.message) throw new Error(`${provider.label}: ${reply.error ?? "no answer"}`);

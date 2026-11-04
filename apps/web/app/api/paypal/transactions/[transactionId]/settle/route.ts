@@ -517,14 +517,17 @@ export async function POST(_request: Request, routeContext: { params: Promise<{ 
       ...offer.evidence.map((item: Evidence) => Date.parse(item.validUntil)).filter((timestamp) => Number.isFinite(timestamp)),
     );
     const gateValidUntil = Number.isFinite(gateValidUntilMs) ? new Date(gateValidUntilMs).toISOString() : now.toISOString();
-    // The real checkout page, as read by Meta Muse and judged by the Checkout Inspector's fixed rules. If one was attached
-    // to this order it can only make the decision stricter. If the lookup itself fails we can't rule out a blocking
-    // verdict, so we fail closed.
-    let checkoutInspection: "none" | "safe" | "blocked" | "unverified" = "none";
+    // The current checkout revision must have a SAFE_TO_PAY inspection before capture. Missing, stale or
+    // unverifiable inspection results block settlement; the model never makes this decision.
+    let checkoutInspection: "safe" | "blocked" | "unverified" = "unverified";
     let inspectionRef: { id: string; outcome: string; createdAt: string } | null = null;
     try {
       const latest = await getLatestCheckoutInspection(transactionId);
-      if (latest) {
+      // Only an inspection for the exact server-side checkout revision being settled is valid.
+      // A stale SAFE_TO_PAY from an earlier seller scenario can never authorize the current revision.
+      if (!latest || latest.contextRevision !== stored.revision) {
+        checkoutInspection = "unverified";
+      } else {
         checkoutInspection = latest.outcome === "SAFE_TO_PAY" ? "safe" : latest.outcome === "DO_NOT_PAY" ? "blocked" : "unverified";
         inspectionRef = { id: latest.id, outcome: latest.outcome, createdAt: latest.createdAt };
       }

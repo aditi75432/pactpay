@@ -3,14 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import StepTracker from "./StepTracker";
 import InspectionResult, { type InspectionPayload } from "./InspectionResult";
+import AgentAccess from "./AgentAccess";
 import { svgToPngDataUrl } from "./rasterize";
 
 /**
- * The whole purchase after you approve your rules, on one page: Muse shops, PayPal holds the money, two Meta models read
- * the real checkout page, you approve the hold, and the fixed gate settles. Nothing here moves money by itself.
+ * The whole purchase after you approve your rules, on one page: Muse shops, PayPal holds the money, two independent readings check
+ * the order’s Sandbox checkout evidence, you approve the hold, and the fixed gate settles. Nothing here moves money by itself.
  */
 type Ev =
   | { type: "start"; modelLabel: string; model: string; openWeights: boolean; autonomy: string }
+  | { type: "catalog"; data: Record<string, unknown> }
   | { type: "model"; text: string }
   | { type: "tool_call"; id: string; name: string; args: Record<string, unknown> }
   | { type: "tool_result"; id: string; name: string; status: number; refused: boolean; data: Record<string, unknown> }
@@ -19,6 +21,10 @@ type Ev =
   | { type: "error"; message: string };
 
 type Hold = { approvalUrl: string; transactionId: string };
+type CatalogRow = {
+  snapshotId: string; title: string; imageUrl: string | null; offerUrl: string | null; merchant: string;
+  itemPrice: number; currency: string; verdict: string; reason: string; refreshed: boolean; refreshStatus: string;
+};
 type Outcome = { kind: "CAPTURED" | "BLOCKED" | "NEEDS_YOU" | "UNKNOWN"; text: string };
 type Props = { approvalId: string; ruleCount: number; searchQuery: string; hostile: boolean; tempt: boolean; autonomyTitle: string; onReset: () => void };
 
@@ -74,6 +80,7 @@ function Timeline({ events }: { events: Ev[] }) {
     <div className="pp-timeline" aria-live="polite">
       {events.map((event, index) => {
         if (event.type === "start") return <div key={index} className="pp-ev pp-ev-model pp-enter"><div className="pp-ev-head">Model</div>{event.modelLabel} ({event.openWeights ? "open weights" : "Meta Model API"})</div>;
+        if (event.type === "catalog") return <div key={index} className="pp-ev pp-ev-good pp-enter"><div className="pp-ev-head">🛍️ Live offers ready</div>{Array.isArray(event.data.results) ? `${event.data.results.length} products checked against your approved rules.` : typeof event.data.error === "string" ? event.data.error : "Catalog search completed."}</div>;
         if (event.type === "model") return <div key={index} className="pp-ev pp-ev-model pp-enter"><div className="pp-ev-head">🧠 Muse says</div>{event.text}</div>;
         if (event.type === "tool_call") return <div key={index} className="pp-ev pp-ev-tool pp-enter"><div className="pp-ev-head">🔧 {TOOL_TITLES[event.name] ?? event.name} <code>{event.name}</code></div></div>;
         if (event.type === "tool_result") return (
@@ -91,6 +98,7 @@ function Timeline({ events }: { events: Ev[] }) {
 
 export default function ShopRun({ approvalId, ruleCount, searchQuery, hostile, tempt, autonomyTitle, onReset }: Props) {
   const [events, setEvents] = useState<Ev[]>([]);
+  const [catalogRows, setCatalogRows] = useState<CatalogRow[]>([]);
   const [running, setRunning] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
   const [hold, setHold] = useState<Hold | null>(null);
@@ -109,18 +117,31 @@ export default function ShopRun({ approvalId, ruleCount, searchQuery, hostile, t
   const settleStarted = useRef(false);
 
   const runShop = useCallback(async (task: string) => {
-    setRunning(true); setAgentError(null); setEvents([]); setHold(null); setInspection(null); setInspectError(null); setPageImage(null);
+    setRunning(true); setAgentError(null); setEvents([]); setCatalogRows([]); setHold(null); setInspection(null); setInspectError(null); setPageImage(null);
     setTxStatus(null); setSettleEvents([]); setOutcome(null); inspectedFor.current = null; settleStarted.current = false;
     controller.current = new AbortController();
     try {
-      await streamAgent({ approvalId, task, phase: "shop" }, controller.current.signal, (event) => {
+      await streamAgent({ approvalId, task, phase: "shop", searchQuery }, controller.current.signal, (event) => {
+        if (event.type === "catalog" || (event.type === "tool_result" && event.name === "shortlist")) {
+          const data = event.data;
+          if (Array.isArray(data.results)) {
+            setCatalogRows((data.results as Array<Record<string, unknown>>).map((item) => ({
+              snapshotId: String(item.snapshotId ?? ""), title: String(item.title ?? "Offer"),
+              imageUrl: typeof item.imageUrl === "string" ? item.imageUrl : null,
+              offerUrl: typeof item.offerUrl === "string" ? item.offerUrl : null,
+              merchant: String(item.merchant ?? ""), itemPrice: Number(item.itemPrice ?? 0), currency: String(item.currency ?? "USD"),
+              verdict: String(item.verdict ?? "NEEDS_EVIDENCE"), reason: String(item.reason ?? ""), refreshed: item.refreshed === true,
+              refreshStatus: typeof item.refreshStatus === "string" ? item.refreshStatus : "Not refreshed",
+            })));
+          }
+        }
         if (event.type === "needs_human" && event.transactionId) setHold({ approvalUrl: event.approvalUrl, transactionId: event.transactionId });
         setEvents((current) => [...current, event]);
       });
     } catch (caught) {
       if (!(caught instanceof DOMException && caught.name === "AbortError")) setAgentError(caught instanceof Error ? caught.message : "The agent stopped.");
     } finally { setRunning(false); }
-  }, [approvalId]);
+  }, [approvalId, searchQuery]);
 
   useEffect(() => {
     if (started.current) return;
@@ -136,7 +157,7 @@ export default function ShopRun({ approvalId, ruleCount, searchQuery, hostile, t
       if (!pageResponse.ok || !pagePayload.svg || !pagePayload.width || !pagePayload.height || !pagePayload.page) throw new Error(pagePayload.error ?? "Couldn't load the checkout page.");
       const png = await svgToPngDataUrl(pagePayload.svg, pagePayload.width, pagePayload.height);
       setPageImage({ src: png, merchant: pagePayload.page.merchant, total: pagePayload.page.total, currency: pagePayload.page.currency, variant: pagePayload.page.variant });
-      setInspecting("Two Meta Muse models are reading the page independently…");
+      setInspecting("Two independent Meta model readings are checking the Sandbox checkout evidence…");
       const response = await fetch("/api/inspector/checkout", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ approvalId, image: png, transactionId }),
@@ -278,12 +299,43 @@ export default function ShopRun({ approvalId, ruleCount, searchQuery, hostile, t
         {running && <button type="button" className="pp-link-btn" style={{ marginTop: 8 }} onClick={() => controller.current?.abort()}>Stop the agent</button>}
       </section>
 
+      {catalogRows.length > 0 && (
+        <section className="pp-card pp-enter" aria-labelledby="catalog-results">
+          <div className="pp-card-head">
+            <div>
+              <h2 className="pp-h3" id="catalog-results">Offers found by PactPay</h2>
+              <p className="pp-small pp-muted" style={{ marginTop: 4 }}>{catalogRows.length} live catalog offers, each checked against the unchanged approved Purchase Pact. Images, prices and reasons come from the saved offer snapshots.</p>
+            </div>
+          </div>
+          <div className="pp-stack" style={{ gap: 10 }}>
+            {catalogRows.map((row) => (
+              <article className={`pp-card-flat pp-offer ${row.refreshed && row.verdict === "PASS" ? "pp-offer-best" : ""}`} key={row.snapshotId}>
+                {row.imageUrl ? <img className="pp-offer-img" src={row.imageUrl} alt={row.title} loading="lazy" referrerPolicy="no-referrer" /> : <div className="pp-offer-img pp-offer-img-empty">No photo</div>}
+                <div>
+                  <div className="pp-row pp-between" style={{ gap: 10 }}>
+                    <h3 style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.35 }}>{row.title}</h3>
+                    <span className={`pp-badge ${row.verdict === "PASS" ? "pp-badge-good" : row.verdict === "BLOCKED" ? "pp-badge-bad" : "pp-badge-warn"}`}>{row.verdict.replaceAll("_", " ")}</span>
+                  </div>
+                  <p className="pp-small pp-muted" style={{ marginTop: 4 }}>{row.merchant}</p>
+                  <p className="pp-price" style={{ marginTop: 7 }}>{new Intl.NumberFormat(undefined, { style: "currency", currency: row.currency, maximumFractionDigits: 2 }).format(row.itemPrice)}</p>
+                  <p className="pp-small" style={{ marginTop: 7 }}>{row.reason}</p>
+                  <p className="pp-tiny pp-muted" style={{ marginTop: 5 }}>{row.refreshStatus}</p>
+                  {row.offerUrl && <a className="pp-link-btn" href={row.offerUrl} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 8 }}>View store offer ↗</a>}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <AgentAccess approvalId={approvalId} />
+
       {hold && (
         <section className="pp-card pp-enter" aria-labelledby="stage-inspect">
           <div className="pp-card-head">
             <div>
-              <h2 className="pp-h3" id="stage-inspect">3 · Muse reads the real checkout page, twice</h2>
-              <p className="pp-small pp-muted" style={{ marginTop: 4 }}>Before the money can move, two independent Meta vision readings of the page. Fixed rules, not a model, decide if it matches what you approved.</p>
+              <h2 className="pp-h3" id="stage-inspect">3 · Muse reads the Sandbox checkout evidence, twice</h2>
+              <p className="pp-small pp-muted" style={{ marginTop: 4 }}>Before the money can move, two independent readings check the Sandbox checkout evidence. Fixed rules, not a model, decide if it matches what you approved.</p>
             </div>
             {inspecting ? <span className="pp-badge pp-badge-info"><span className="pp-spinner pp-spinner-dark" aria-hidden="true" /> Inspecting</span>
               : verdict ? <span className={`pp-badge ${verdict === "SAFE_TO_PAY" ? "pp-badge-good" : verdict === "DO_NOT_PAY" ? "pp-badge-bad" : "pp-badge-warn"}`}>{verdict === "SAFE_TO_PAY" ? "Safe to pay" : verdict === "DO_NOT_PAY" ? "Do not pay" : "Can't verify"}</span> : null}

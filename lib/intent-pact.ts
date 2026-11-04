@@ -46,8 +46,8 @@ function normalizeExpected(field: string, value: unknown): string | number | boo
   let text = cleanText(value, 100);
   if (!text) throw new Error(`Constraint '${field}' requires a non-empty expected value.`);
   if (field === "attributes.availability") {
-    if (/^(?:in[ -]?stock|available|available now)$/i.test(text)) return "InStock";
-    if (/^(?:out[ -]?of[ -]?stock|unavailable)$/i.test(text)) return "OutOfStock";
+    if (/^(?:in[ _-]?stock|available|available now)$/i.test(text)) return "InStock";
+    if (/^(?:out[ _-]?of[ _-]?stock|unavailable|sold[ _-]?out)$/i.test(text)) return "OutOfStock";
   }
   if (field === "attributes.condition") text = text.toLowerCase();
   if (field === "currency") {

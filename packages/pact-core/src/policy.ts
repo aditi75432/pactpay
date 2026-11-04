@@ -70,6 +70,22 @@ function valuesEqual(left: unknown, right: unknown): boolean {
   return false;
 }
 
+/**
+ * Availability arrives from catalogs in several equivalent spellings, e.g.
+ * `InStock`, `in stock`, and `in_stock`. Normalize separators only for this
+ * enum field; do not broaden the meaning of other product attributes.
+ */
+function normalizeAvailabilityToken(value: string): string {
+  return value.trim().toLocaleLowerCase("en-US").replace(/[\s_-]+/g, "");
+}
+
+function valuesEqualForField(left: unknown, right: unknown, field: string): boolean {
+  if (field === "attributes.availability" && typeof left === "string" && typeof right === "string") {
+    return normalizeAvailabilityToken(left) === normalizeAvailabilityToken(right);
+  }
+  return valuesEqual(left, right);
+}
+
 function readField(offer: OfferSnapshot, field: string): string | number | boolean | undefined {
   const cleanField = field.trim();
   if (!cleanField) return undefined;
@@ -92,8 +108,8 @@ function readField(offer: OfferSnapshot, field: string): string | number | boole
     : undefined;
 }
 
-function compare(actual: string | number | boolean, expected: string | number | boolean, comparator: Constraint["comparator"]): boolean | null {
-  if (comparator === "eq") return valuesEqual(actual, expected);
+function compare(actual: string | number | boolean, expected: string | number | boolean, comparator: Constraint["comparator"], field: string): boolean | null {
+  if (comparator === "eq") return valuesEqualForField(actual, expected, field);
   if (comparator === "contains") {
     if (typeof actual !== "string" || typeof expected !== "string") return null;
     return actual.toLocaleLowerCase("en-US").includes(expected.toLocaleLowerCase("en-US"));
@@ -194,7 +210,7 @@ function evaluateConstraint(
   }
 
   // Conflicting fresh evidence is treated as unknown and must not be settled.
-  const conflictingEvidence = freshEvidence.some((item) => !valuesEqual(item.value, actual));
+  const conflictingEvidence = freshEvidence.some((item) => !valuesEqualForField(item.value, actual, field));
   if (conflictingEvidence) {
     return {
       result: { ...base, status: "unknown", reason: `Fresh evidence conflicts with the current offer value for '${field}'.` },
@@ -203,7 +219,7 @@ function evaluateConstraint(
     };
   }
 
-  const comparison = compare(actual, constraint.expected, constraint.comparator);
+  const comparison = compare(actual, constraint.expected, constraint.comparator, field);
   if (comparison === null) {
     return {
       result: { ...base, status: "unknown", reason: `Cannot safely apply '${constraint.comparator}' to field '${field}'.` },

@@ -3,12 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PurchasePact } from "@pactpay/pact-core";
 import { previewChannel3TestQuote } from "@pactpay/pact-core/settlement-demo";
-import { applyCheckoutQuote, quoteRulesFor } from "@pactpay/pact-core/checkout-quote";
 import { describeAutonomy, shouldAutoHold, type Autonomy } from "@pactpay/pact-core/autonomy";
 import { logEvent, readAutonomy, readExcluded } from "../components/agentLog";
 import { offerKey } from "@pactpay/pact-core/seller-world";
 import AppShell from "../components/AppShell";
 import StepTracker from "../components/StepTracker";
+import AgentAccess from "../components/AgentAccess";
 
 type LiveOffer = {
   snapshotId: string;
@@ -40,8 +40,7 @@ type EvalResult = {
   capturePerformedByPactPay: false;
   note: string;
 };
-type RefreshResult = { status: "MATCHED_WITH_CHANGES" | "MATCHED_UNCHANGED" | "OFFER_NOT_FOUND"; refreshedOffer: LiveOffer | null; changedFields: string[]; note: string; paymentAction: "NONE"; capturePerformedByPactPay: false };
-type Verdict = "PASS" | "NEEDS_EVIDENCE" | "BLOCKED" | "SAFETY_HOLD";
+type Verdict = "PASS" | "NEEDS_EVIDENCE" | "BLOCKED" | "SAFETY_HOLD" | "SKIPPED";
 type Candidate = { offer: LiveOffer; evaluation: EvalResult; verdict: Verdict; relevance: number; refreshed: boolean; refreshStatus: string; reason: string };
 type StepStatus = "waiting" | "working" | "done" | "issue";
 type AgentStep = { label: string; status: StepStatus; detail: string };
@@ -49,55 +48,6 @@ type AgentStep = { label: string; status: StepStatus; detail: string };
 const STORAGE_KEY = "pactpay.activePact.v1";
 const META_KEY = "pactpay.activeIntent.v1";
 const APPROVAL_KEY = "pactpay.activeApproval.v1";
-const ACCESSORY_TERMS = /\b(case|cover|protector|sleeve|skin|holder|charm|strap|replacement|ear\s?tips?|earbud\s?tips?|carry(?:ing)?\s?pouch|mount|clip)\b/i;
-const STOP_WORDS = new Set(["find", "me", "a", "an", "the", "with", "under", "over", "less", "than", "at", "most", "least", "price", "catalog", "item", "in", "stock", "only", "brand", "prefer", "usd", "inr", "for", "of", "and", "or", "buy", "get", "want", "please"]);
-
-function verdictFor(result: EvalResult): Verdict {
-  if (!result.verification.securityClear) return "SAFETY_HOLD";
-  const hard = result.verification.results.filter((item) => (item.severity ?? "hard") === "hard");
-  if (hard.some((item) => item.status === "fail")) return "BLOCKED";
-  if (hard.some((item) => item.status === "unknown") || !result.verification.evidenceFresh || !result.verification.evidenceAttributable) return "NEEDS_EVIDENCE";
-  return result.summary.decision === "capture" ? "PASS" : "BLOCKED";
-}
-
-function relevanceScore(offer: LiveOffer, query: string): number {
-  const tokens = query.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length > 1 && !STOP_WORDS.has(token)) ?? [];
-  const title = offer.productTitle.toLowerCase();
-  const brand = (offer.brand ?? "").toLowerCase();
-  const description = (offer.description ?? "").toLowerCase();
-  let score = 0;
-  for (const token of new Set(tokens)) {
-    if (title.includes(token)) score += 5;
-    else if (brand.includes(token)) score += 3;
-    else if (description.includes(token)) score += 1;
-  }
-  // This is only a relevance heuristic, not a policy check. The agent still exposes accessory-like results instead of silently deleting them.
-  if (ACCESSORY_TERMS.test(offer.productTitle) && !ACCESSORY_TERMS.test(query)) score -= 8;
-  return score;
-}
-
-function humanReason(candidate: Candidate, pact: PurchasePact): string {
-  if (candidate.verdict === "SAFETY_HOLD") return candidate.refreshed ? "The latest check could not clear a required safety, freshness or source-attribution check." : "PactPay could not verify a required safety, freshness or source-attribution prerequisite. This listing is not recommended.";
-  const hardFailures = candidate.evaluation.verification.results.filter((item) => (item.severity ?? "hard") === "hard" && item.status === "fail");
-  if (hardFailures.length) {
-    const first = hardFailures[0];
-    const rule = pact.constraints.find((constraint) => constraint.id === first?.constraintId);
-    if (rule?.field === "attributes.itemPrice" && rule.comparator === "lte" && typeof rule.expected === "number") return `Item price ${candidate.offer.price.toFixed(2)} ${candidate.offer.currency} exceeds your ${rule.expected.toFixed(2)} ${candidate.offer.currency} limit.`;
-    if (rule?.field === "attributes.brand") return `The catalog brand is ${candidate.offer.brand ?? "not supplied"}; your Pact requires ${String(rule.expected)}.`;
-    return rule?.description ? `Doesn't meet: ${rule.description}` : "At least one hard requirement failed.";
-  }
-  const missing = candidate.evaluation.verification.results.find((item) => (item.severity ?? "hard") === "hard" && item.status === "unknown");
-  if (missing) {
-    const rule = pact.constraints.find((constraint) => constraint.id === missing.constraintId);
-    return rule ? `${rule.description} The live catalog doesn't provide enough evidence to verify it.` : "A required fact is missing from the current evidence.";
-  }
-  if (candidate.verdict === "PASS") {
-    if (!candidate.refreshed) return "The initial hard-rule check passed, but this listing has not been re-confirmed. It is not a current recommendation yet.";
-    const softFailures = candidate.evaluation.verification.results.filter((item) => item.severity === "soft" && item.status !== "pass").length;
-    return softFailures ? `All hard rules passed after refresh; ${softFailures} preference(s) did not match.` : "The refreshed offer passes the approved hard rules. This is not proof of merchant checkout totals.";
-  }
-  return candidate.refreshed ? "This offer does not currently qualify for recommendation." : "This offer did not qualify during the initial policy check and was not refreshed.";
-}
 
 function money(amount: number, currency: string) {
   try { return new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: 2 }).format(amount); }
@@ -109,7 +59,7 @@ function badgeColor(verdict: Verdict) { return verdict === "PASS" ? "#8ee5b0" : 
 const initialSteps: AgentStep[] = [
   { label: "Search live catalog", status: "waiting", detail: "Channel3 will be called with your approved search query." },
   { label: "Evaluate the Purchase Pact", status: "waiting", detail: "Each saved offer snapshot will be checked by the server-side policy engine." },
-  { label: "Refresh leading candidates", status: "waiting", detail: "Up to three non-blocked candidates will be re-fetched and re-evaluated." },
+  { label: "Refresh leading candidates", status: "waiting", detail: "Up to ten leading candidates will be re-fetched and re-evaluated." },
 ];
 
 export default function ShoppingAgentPage() {
@@ -169,104 +119,77 @@ export default function ShoppingAgentPage() {
     setSteps(initialSteps.map((step, index) => ({ ...step, status: index === 0 ? "working" : "waiting" })));
 
     try {
-      const searchResponse = await fetch("/api/discovery/search", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: query.trim() }), cache: "no-store",
+      let approvalId: string | null = null;
+      try {
+        const raw = window.sessionStorage.getItem(APPROVAL_KEY);
+        const parsed = raw ? JSON.parse(raw) as { approvalId?: unknown; pactId?: unknown } : null;
+        if (parsed && typeof parsed.approvalId === "string" && parsed.pactId === pact.id) approvalId = parsed.approvalId;
+      } catch { /* no saved approval */ }
+      if (!approvalId) throw new Error("We can't find your saved approval. Go back and approve your rules again.");
+
+      updateStep(0, "working", "Searching Channel3 with your full product request and targeted query variants…");
+      const response = await fetch("/api/discovery/shortlist", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approvalId, query: query.trim() }), cache: "no-store",
       });
-      const searchPayload = await searchResponse.json();
-      if (!searchResponse.ok) throw new Error(searchPayload.error ?? "Channel3 search failed.");
-      const offers = (Array.isArray(searchPayload.offers) ? searchPayload.offers : []) as LiveOffer[];
-      setSearchedAt(typeof searchPayload.fetchedAt === "string" ? searchPayload.fetchedAt : new Date().toISOString());
-      updateStep(0, "done", `Channel3 returned ${offers.length} listing(s); snapshots were saved before evaluation.`);
-      if (!offers.length) {
-        updateStep(1, "issue", "No offers were returned, so no candidate was evaluated and no payment action occurred.");
-        updateStep(2, "waiting", "There are no candidates to refresh.");
-        setNotice("No listing was found for this exact query. Try a broader phrase such as “wireless mouse” or “USB-C charger”.");
-        setFinished(true);
-        return;
-      }
+      const payload = await response.json() as {
+        error?: string; fetchedAt?: string; catalogCount?: number; refreshedCount?: number;
+        results?: Array<Record<string, unknown>>; note?: string;
+      };
+      if (!response.ok) throw new Error(payload.error ?? "The shared shopping pipeline failed.");
+      const rows = Array.isArray(payload.results) ? payload.results : [];
+      setSearchedAt(typeof payload.fetchedAt === "string" ? payload.fetchedAt : new Date().toISOString());
+      setProgress({ complete: rows.length, total: rows.length });
+      updateStep(0, "done", `Channel3 returned ${payload.catalogCount ?? rows.length} live offers across the search variants.`);
+      updateStep(1, "done", `${rows.length} offers were evaluated by the same server-side rule engine used by Muse and external agents.`);
+      updateStep(2, rows.some((item) => item.refreshed === true) ? "done" : rows.length ? "issue" : "done",
+        `${payload.refreshedCount ?? rows.filter((item) => item.refreshed === true).length} candidate(s) were re-fetched and re-evaluated. Only refreshed PASS results can be held.`);
 
-      updateStep(1, "working", `Checking 0 of ${offers.length} saved snapshots…`);
-      setProgress({ complete: 0, total: offers.length });
-      const evaluated: Candidate[] = [];
-      for (let index = 0; index < offers.length; index += 1) {
-        const offer = offers[index];
-        if (!offer) continue;
-        try {
-          const response = await fetch("/api/discovery/evaluate", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ snapshotId: offer.snapshotId, pact }), cache: "no-store",
-          });
-          const payload = await response.json();
-          if (!response.ok) throw new Error(payload.error ?? "Policy evaluation failed.");
-          const evaluation = applyCheckoutQuote(payload as EvalResult, { price: offer.price, currency: offer.currency }, pact ? quoteRulesFor(pact) : []);
-          evaluated.push({ offer, evaluation, verdict: verdictFor(evaluation), relevance: relevanceScore(offer, query), refreshed: false, refreshStatus: "Not refreshed", reason: "Evaluation complete; currentness not yet re-confirmed." });
-        } catch (caught) {
-          evaluated.push({
-            offer,
-            evaluation: { runId: "", offer: { id: offer.snapshotId, title: offer.productTitle, itemPrice: offer.price, currency: offer.currency, domain: offer.offerDomain }, verification: { securityClear: false, evidenceFresh: false, evidenceAttributable: false, results: [] }, summary: { decision: "block", reason: "evaluation_error", hardPasses: 0, hardFailures: 0, softFailures: 0 }, missingHardEvidence: [], paymentAction: "NONE", capturePerformedByPactPay: false, note: caught instanceof Error ? caught.message : "Evaluation failed." },
-            verdict: "SAFETY_HOLD", relevance: relevanceScore(offer, query), refreshed: false, refreshStatus: "Evaluation failed", reason: "The server-side evaluation could not be completed. This candidate is not recommended.",
-          });
-        }
-        setProgress({ complete: index + 1, total: offers.length });
-        updateStep(1, "working", `Checked ${index + 1} of ${offers.length} saved snapshots…`);
-      }
-      updateStep(1, "done", `${evaluated.length} listing(s) evaluated by PactPay's deterministic policy engine. No PayPal order was created.`);
-
-      const refreshTargets = [...evaluated]
-        .filter((candidate) => candidate.verdict === "PASS" || candidate.verdict === "NEEDS_EVIDENCE")
-        .sort((a, b) => (a.verdict === "PASS" ? 0 : 1) - (b.verdict === "PASS" ? 0 : 1) || b.relevance - a.relevance || a.evaluation.summary.softFailures - b.evaluation.summary.softFailures)
-        .slice(0, 3);
-      updateStep(2, "working", refreshTargets.length ? `Re-fetching ${refreshTargets.length} leading candidate(s) from Channel3…` : "No candidate survived the first hard-rule pass. Showing blockers rather than inventing a match.");
-      const refined = [...evaluated];
-      let refreshedCount = 0;
-      for (const target of refreshTargets) {
-        try {
-          const response = await fetch("/api/discovery/refresh", {
-            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshotId: target.offer.snapshotId }), cache: "no-store",
-          });
-          const payload = await response.json();
-          if (!response.ok) throw new Error(payload.error ?? "Channel3 revalidation failed.");
-          const refresh = payload as RefreshResult;
-          const index = refined.findIndex((candidate) => candidate.offer.snapshotId === target.offer.snapshotId);
-          if (index < 0) continue;
-          if (!refresh.refreshedOffer) {
-            refined[index] = { ...target, verdict: "SAFETY_HOLD", refreshed: false, refreshStatus: "Same offer not confirmed", reason: "Channel3 could not uniquely re-confirm this product+merchant offer. It is not recommended." };
-            continue;
-          }
-          const refreshedOffer = refresh.refreshedOffer;
-          const evalResponse = await fetch("/api/discovery/evaluate", {
-            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshotId: refreshedOffer.snapshotId, pact }), cache: "no-store",
-          });
-          const evalPayload = await evalResponse.json();
-          if (!evalResponse.ok) throw new Error(evalPayload.error ?? "Refreshed snapshot evaluation failed.");
-          const freshEvaluation = applyCheckoutQuote(evalPayload as EvalResult, { price: refreshedOffer.price, currency: refreshedOffer.currency }, pact ? quoteRulesFor(pact) : []);
-          const freshCandidate: Candidate = {
-            offer: refreshedOffer,
-            evaluation: freshEvaluation,
-            verdict: verdictFor(freshEvaluation),
-            relevance: relevanceScore(refreshedOffer, query),
-            refreshed: true,
-            refreshStatus: refresh.status === "MATCHED_WITH_CHANGES" ? `Re-confirmed · changes: ${refresh.changedFields.join(", ") || "catalog facts updated"}` : "Re-confirmed unchanged",
-            reason: "",
-          };
-          freshCandidate.reason = humanReason(freshCandidate, pact);
-          refined[index] = freshCandidate;
-          refreshedCount += 1;
-        } catch (caught) {
-          const index = refined.findIndex((candidate) => candidate.offer.snapshotId === target.offer.snapshotId);
-          if (index >= 0) refined[index] = { ...target, verdict: "SAFETY_HOLD", refreshed: false, refreshStatus: "Refresh failed", reason: caught instanceof Error ? `Couldn't re-confirm current catalog facts: ${caught.message}` : "Could not re-confirm current catalog facts." };
-        }
-      }
-      const final = refined.map((candidate) => ({ ...candidate, reason: candidate.evaluation.runId ? humanReason(candidate, pact) : candidate.reason }));
+      const fallbackEvaluation = (offer: LiveOffer, note: string): EvalResult => ({
+        runId: "", offer: { id: offer.snapshotId, title: offer.productTitle, itemPrice: offer.price, currency: offer.currency, domain: offer.offerDomain },
+        verification: { securityClear: false, evidenceFresh: false, evidenceAttributable: false, results: [] },
+        summary: { decision: "block", reason: "evaluation_unavailable", hardPasses: 0, hardFailures: 0, softFailures: 0 },
+        missingHardEvidence: [], paymentAction: "NONE", capturePerformedByPactPay: false, note,
+      });
+      const final: Candidate[] = rows.map((item) => {
+        const offer: LiveOffer = {
+          snapshotId: String(item.snapshotId ?? ""), productId: String(item.productId ?? ""), productTitle: String(item.title ?? "Offer"),
+          description: typeof item.description === "string" ? item.description : null,
+          brand: typeof item.brand === "string" ? item.brand : null,
+          imageUrl: typeof item.imageUrl === "string" ? item.imageUrl : null,
+          offerDomain: String(item.merchant ?? ""), offerUrl: String(item.offerUrl ?? ""), price: Number(item.itemPrice ?? 0),
+          currency: String(item.currency ?? "USD"), availability: typeof item.availability === "string" ? item.availability : null,
+          condition: typeof item.condition === "string" ? item.condition : null,
+          ramGb: typeof item.ramGb === "number" ? item.ramGb : null,
+          structuredAttributes: item.structuredAttributes && typeof item.structuredAttributes === "object" ? item.structuredAttributes as Record<string, unknown> : {},
+          fetchedAt: typeof item.fetchedAt === "string" ? item.fetchedAt : new Date().toISOString(),
+          validUntil: typeof item.validUntil === "string" ? item.validUntil : new Date(Date.now() + 60_000).toISOString(),
+        };
+        const evaluation = item.evaluation && typeof item.evaluation === "object" ? item.evaluation as EvalResult : fallbackEvaluation(offer, String(item.reason ?? "The policy result was unavailable."));
+        return {
+          offer, evaluation,
+          verdict: (["PASS", "NEEDS_EVIDENCE", "BLOCKED", "SAFETY_HOLD", "SKIPPED"].includes(String(item.verdict)) ? String(item.verdict) : "SAFETY_HOLD") as Verdict,
+          relevance: typeof item.relevance === "number" ? item.relevance : 0,
+          refreshed: item.refreshed === true,
+          refreshStatus: typeof item.refreshStatus === "string" ? item.refreshStatus : "Not re-confirmed",
+          reason: typeof item.reason === "string" ? item.reason : "The offer was evaluated by PactPay.",
+        };
+      });
       final.sort((a, b) => {
-        const group = (item: Candidate) => item.refreshed && item.verdict === "PASS" ? 0 : item.refreshed && item.verdict === "NEEDS_EVIDENCE" ? 1 : item.verdict === "BLOCKED" ? 2 : 3;
-        return group(a) - group(b) || b.relevance - a.relevance || a.evaluation.summary.softFailures - b.evaluation.summary.softFailures || a.offer.price - b.offer.price;
+        const rank = (item: Candidate) => item.refreshed && item.verdict === "PASS" ? 0 : item.refreshed && item.verdict === "NEEDS_EVIDENCE" ? 1 : item.verdict === "BLOCKED" ? 2 : item.verdict === "SKIPPED" ? 3 : 4;
+        return rank(a) - rank(b) || b.relevance - a.relevance || a.evaluation.summary.softFailures - b.evaluation.summary.softFailures || a.offer.price - b.offer.price;
       });
       setCandidates(final);
-      updateStep(2, refreshedCount ? "done" : refreshTargets.length ? "issue" : "done", refreshedCount ? `${refreshedCount} candidate(s) re-confirmed and evaluated again against a new immutable Channel3 snapshot.` : refreshTargets.length ? "No leading candidate could be fully re-confirmed; those listings are not presented as current recommendations." : "No candidate qualified for revalidation. See the hard-rule blockers below.");
       const passCount = final.filter((candidate) => candidate.refreshed && candidate.verdict === "PASS").length;
       const evidenceCount = final.filter((candidate) => candidate.refreshed && candidate.verdict === "NEEDS_EVIDENCE").length;
-      setNotice(passCount ? `Agent run complete. ${passCount} re-confirmed offer(s) pass the current hard-rule evidence checks; review the reasons before choosing one.` : evidenceCount ? `Agent run complete. No fully verified match yet; ${evidenceCount} re-confirmed candidate(s) still need evidence.` : "Agent run complete. No offer passed the full hard-rule and revalidation sequence; PactPay has not created a PayPal order or moved funds.");
+      const blockedCount = final.filter((candidate) => candidate.verdict === "BLOCKED").length;
+      setNotice(passCount
+        ? `Found ${passCount} fresh offer(s) that pass your approved hard rules. ${final.length} total listings are shown below.`
+        : evidenceCount
+          ? `${evidenceCount} offer(s) need more evidence. Your rules were not relaxed; review the reasons below.`
+          : final.length
+            ? `No offer passed every approved hard rule. ${blockedCount} were blocked and the rest need evidence or refresh. Nothing was held.`
+            : (payload.note ?? "No usable live offers were found. Try a more specific product name."));
       setFinished(true);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The shopping agent could not finish this run.");
@@ -734,76 +657,6 @@ function SellerClaims({ offer }: { offer: LiveOffer }) {
         </div>
       )}
     </div>
-  );
-}
-
-
-/** Lets the shopper hand a limited key to their own AI agent. The key is bound to the rules approved here. */
-function AgentAccess() {
-  const [approvalId, setApprovalId] = useState<string | null>(null);
-  const [key, setKey] = useState<string | null>(null);
-  const [expiresAt, setExpiresAt] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
-
-  useEffect(() => {
-    try {
-      const raw = window.sessionStorage.getItem("pactpay.activeApproval.v1");
-      const parsed = raw ? JSON.parse(raw) as { approvalId?: unknown } : null;
-      if (parsed && typeof parsed.approvalId === "string") setApprovalId(parsed.approvalId);
-    } catch { /* no approval stored */ }
-  }, []);
-
-  async function create() {
-    if (!approvalId || busy) return;
-    setBusy(true); setError(null);
-    try {
-      const response = await fetch("/api/agent-keys", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvalId }) });
-      const payload = await response.json() as { key?: string; expiresAt?: string; error?: string };
-      if (!response.ok || !payload.key) throw new Error(payload.error ?? "Couldn't create a key.");
-      setKey(payload.key); setExpiresAt(payload.expiresAt ?? null);
-      logEvent("you", "Created a limited agent key for my own AI agent.", `key:${approvalId}`);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Couldn't create a key."); }
-    finally { setBusy(false); }
-  }
-  async function revoke() {
-    if (!approvalId) return;
-    setBusy(true);
-    try { await fetch("/api/agent-keys", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvalId }) }); setKey(null); }
-    finally { setBusy(false); }
-  }
-  async function copy(label: string, text: string) {
-    try { await navigator.clipboard.writeText(text); setCopied(label); window.setTimeout(() => setCopied(null), 1600); } catch { /* clipboard unavailable */ }
-  }
-  const origin = typeof window === "undefined" ? "" : window.location.origin;
-  const mcpConfig = JSON.stringify({ mcpServers: { pactpay: { command: "node", args: ["scripts/mcp-server.mjs"], env: { PACTPAY_URL: origin, PACTPAY_AGENT_KEY: key ?? "ppk_..." } } } }, null, 2);
-
-  return (
-    <details className="pp-card-flat">
-      <summary style={{ cursor: "pointer", fontWeight: 700 }}>Connect your own AI agent <span className="pp-small pp-muted" style={{ fontWeight: 500 }}>· optional</span></summary>
-      <div className="pp-stack" style={{ marginTop: 12, gap: 12 }}>
-        <p className="pp-small">Give another AI agent a key that is limited to the rules you just approved. It can shortlist offers and ask for PayPal holds. It can&apos;t change your rules, and it can&apos;t release money above the autonomy limit you chose. You still approve every hold on PayPal.</p>
-        {!key && <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" style={{ justifySelf: "start" }} onClick={create} disabled={busy || !approvalId}>{busy ? "Creating…" : "Create an agent key"}</button>}
-        {error && <p className="pp-callout pp-callout-bad" role="alert">{error}</p>}
-        {key && (
-          <>
-            <div>
-              <p className="pp-small" style={{ fontWeight: 700 }}>Your agent key <span className="pp-muted" style={{ fontWeight: 500 }}>(shown once{expiresAt ? `, expires ${new Date(expiresAt).toLocaleString()}` : ""})</span></p>
-              <pre className="pp-code">{key}</pre>
-              <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => copy("key", key)}>{copied === "key" ? "Copied" : "Copy key"}</button>
-            </div>
-            <div>
-              <p className="pp-small" style={{ fontWeight: 700 }}>MCP config (Claude Desktop, Cursor and others)</p>
-              <pre className="pp-code">{mcpConfig}</pre>
-              <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => copy("mcp", mcpConfig)}>{copied === "mcp" ? "Copied" : "Copy config"}</button>
-            </div>
-            <p className="pp-tiny pp-muted">Prove the limits: run <code>pnpm agent:redteam</code> with this key to watch a misbehaving agent get refused.</p>
-            <button type="button" className="pp-link-btn" style={{ justifySelf: "start" }} onClick={revoke} disabled={busy}>Revoke this key</button>
-          </>
-        )}
-      </div>
-    </details>
   );
 }
 

@@ -3,7 +3,7 @@
 import type { Inspection } from "@pactpay/pact-core/checkout-inspection";
 
 export type InspectionReader = { provider: string; model: string; modelLabel: string; openWeights: boolean; ms: number; tokens: number | null };
-export type InspectionPayload = { inspection: Inspection; readers: InspectionReader[]; crossModel: boolean; rulesSource: "approved" | "demo"; attached: { id: string } | null };
+export type InspectionPayload = { inspection: Inspection; readers: InspectionReader[]; crossModel: boolean; rulesSource: "approved" | "demo"; attached: { id: string; reused?: boolean } | null };
 
 /** The verdict, rule by rule. Shared by the Shop workflow and the lab. The decision is made by fixed rules, never the model. */
 export default function InspectionResult({ result, attachedNote }: { result: InspectionPayload; attachedNote?: string }) {
@@ -45,6 +45,7 @@ export default function InspectionResult({ result, attachedNote }: { result: Ins
           <span key={index}>Reader {index + 1}: {reader.modelLabel}{reader.openWeights ? " · open weights" : " · Meta Model API"} · {(reader.ms / 1000).toFixed(1)}s{reader.tokens ? ` · ${reader.tokens.toLocaleString()} tokens` : ""}</span>
         ))}
         <span>{result.crossModel ? "Two different Meta models read it independently" : "Two independent reads by one model"}</span>
+        {result.attached?.reused && <span>This exact screenshot was already inspected for this order revision; the original verdict is retained.</span>}
       </div>
       <p className="pp-small" style={{ marginTop: 12 }}>The decision above was made by fixed rules, not by the model.{attachedNote ? ` ${attachedNote}` : ""}</p>
     </div>
