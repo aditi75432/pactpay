@@ -7,7 +7,7 @@ AI agents can shop. They shouldn't control your money.
 Meta's Muse models do the seeing, hearing, reading and deciding-what-to-try. PactPay lets AI agents shop on your behalf, while ensuring every purchase stays within the limits you approve.
 
 <!-- HACKATHON:START (the only block to edit when you resubmit elsewhere; see docs/hackathons/PAYPAL-SWAP.md) -->
-> **Live app:** https://pactpay-brs1.onrender.com/ || **3-minute demo:** https://youtu.be/-DBGpdTeTg4 || **Test login:** `judge` / `PactPay-Judge-2026` (PayPal Sandbox test money only) ||
+> **Live app:** https://pactpay-brs1.onrender.com/ || **3-minute demo:** https://www.youtube.com/watch?v=ymvczptDzVA || **Test login:** `judge` / `PactPay-Judge-2026` (PayPal Sandbox test money only) ||
 > **Built for:** Meta Global AI Developer Hackathon || Indie Developer track || Theme: Build for Your World
 <!-- HACKATHON:END -->
 
