@@ -5,7 +5,7 @@ import { inspectCheckout, inspectionRulesFor, parseCheckoutReading, type Checkou
 import { INSPECTION_DEMO_RULES } from "@pactpay/pact-core/inspection-samples";
 import { aiTimeoutMs, callModel, configuredProviders, parseModelJson, resolveProvider, type Provider } from "../../../../../../lib/llm-provider";
 import { getPactApproval, isUuidLike } from "../../../../../../lib/pact-approvals";
-import { getProtectedDemoContext } from "../../../../../../lib/db";
+import { getProtectedDemoContext, getTransactionById } from "../../../../../../lib/db";
 import { HOSTILE_HIDDEN_FEE } from "@pactpay/pact-core/checkout-page";
 import { getCheckoutInspectionForEvidence, saveCheckoutInspection } from "../../../../../../lib/checkout-inspections";
 import { requireTransactionAccess } from "../../../../lib/ownership";
@@ -141,6 +141,11 @@ export async function POST(request: Request) {
     const denied = await requireTransactionAccess(body.transactionId);
     if (denied) return denied;
     attachTo = body.transactionId;
+    const transaction = await getTransactionById(attachTo);
+    if (!transaction) return NextResponse.json({ error: "This payment attempt could not be found." }, { status: 404 });
+    if (transaction.status !== "AUTHORIZED") {
+      return NextResponse.json({ error: "This payment attempt is already finalized or not yet authorized. A new inspection cannot change a completed payment decision." }, { status: 409 });
+    }
     attachedContext = await getProtectedDemoContext(attachTo);
     if (!attachedContext || !approvedPactHash || attachedContext.pact_hash.toLowerCase() !== approvedPactHash) {
       return NextResponse.json({ error: "This checkout evidence is not bound to the Purchase Pact approved for this transaction." }, { status: 409 });

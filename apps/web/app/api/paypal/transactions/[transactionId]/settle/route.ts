@@ -301,15 +301,32 @@ async function revalidateChannel3BoundOffer(args: {
     args.pact,
     now,
   );
-  await updateProtectedDemoScenario({
-    transactionId: args.transactionId,
-    expectedRevision: args.stored.revision,
-    scenarioId: args.stored.scenario_id,
-    currentOffer: mutation.offer as unknown as Record<string, unknown>,
-    securityFinding: mutation.securityFinding,
-  });
-  const latest = await getProtectedDemoContext(args.transactionId);
-  if (!latest) throw new Error("Protected context disappeared after storing the fresh Channel3 revalidation.");
+
+  // A no-change live revalidation is an observation, not a new checkout revision.
+  // The refreshed Channel3 snapshot has already been stored in the refresh-check
+  // table above. Bumping the protected-context revision here would invalidate a
+  // SAFE_TO_PAY inspection that was just produced for this exact unchanged offer,
+  // causing the settlement gate to misclassify it as stale and void a valid hold.
+  // Only a real catalog change or an explicitly-mutated demo scenario advances
+  // the context revision and therefore requires a fresh checkout inspection.
+  const unchangedBaseline =
+    args.stored.scenario_id === "BASELINE" &&
+    comparison.changedFields.length === 0 &&
+    mutation.securityFinding === null;
+
+  let latest = args.stored;
+  if (!unchangedBaseline) {
+    await updateProtectedDemoScenario({
+      transactionId: args.transactionId,
+      expectedRevision: args.stored.revision,
+      scenarioId: args.stored.scenario_id,
+      currentOffer: mutation.offer as unknown as Record<string, unknown>,
+      securityFinding: mutation.securityFinding,
+    });
+    const updated = await getProtectedDemoContext(args.transactionId);
+    if (!updated) throw new Error("Protected context disappeared after storing the fresh Channel3 revalidation.");
+    latest = updated;
+  }
   return {
     stored: latest,
     summary: {
@@ -522,7 +539,7 @@ export async function POST(_request: Request, routeContext: { params: Promise<{ 
     let checkoutInspection: "safe" | "blocked" | "unverified" = "unverified";
     let inspectionRef: { id: string; outcome: string; createdAt: string } | null = null;
     try {
-      const latest = await getLatestCheckoutInspection(transactionId);
+      const latest = await getLatestCheckoutInspection(transactionId, stored.revision);
       // Only an inspection for the exact server-side checkout revision being settled is valid.
       // A stale SAFE_TO_PAY from an earlier seller scenario can never authorize the current revision.
       if (!latest || latest.contextRevision !== stored.revision) {

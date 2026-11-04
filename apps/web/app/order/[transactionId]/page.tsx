@@ -203,18 +203,27 @@ export default function OrderPage() {
     if (!data || !storedLoaded || inspectStarted.current) return;
     if (data.transaction.status !== "AUTHORIZED") return;
     inspectStarted.current = true;
-    if (stored) return; // a verdict from earlier in this order already exists
+    // A previous CANNOT_VERIFY is retryable. Do not let it trigger automatic settlement;
+    // take one fresh reading when the hold page is opened, then leave further retries to the user.
+    if (stored?.outcome === "SAFE_TO_PAY" || stored?.outcome === "DO_NOT_PAY") return;
     let hostile = false;
     try { hostile = (JSON.parse(window.sessionStorage.getItem("pactpay.demoControls.v1") ?? "{}") as { hostile?: boolean }).hostile === true; } catch { /* default */ }
     void runInspection(hostile ? "hostile" : "faithful");
   }, [data, storedLoaded, stored, runInspection]);
 
-  const inspectionPending = Boolean(data) && data!.transaction.status === "AUTHORIZED" && (!storedLoaded || inspecting !== null || (!stored && !inspectError && !inspection));
-
   const heldNow = status === "AUTHORIZED";
+  const effectiveInspectionOutcome = inspection?.inspection.outcome ?? stored?.outcome ?? null;
+  // Only a decisive inspection can release the agent's countdown. CANNOT_VERIFY and model/network
+  // errors leave the PayPal authorization on hold so the shopper can retry instead of being auto-voided.
+  const inspectionPending = heldNow && (
+    !storedLoaded || inspecting !== null || effectiveInspectionOutcome === null ||
+    effectiveInspectionOutcome === "CANNOT_VERIFY" || Boolean(inspectError)
+  );
+
   const amountNow = Number(data?.transaction.amount ?? 0);
   const agentDecision = decideSettlement(autonomy, amountNow, "agent");
-  const agentMayRelease = heldNow && agentDecision.allowed && !autoPaused && !agentRefusal && !inspectionPending;
+  const agentMayRelease = heldNow && agentDecision.allowed && !autoPaused && !agentRefusal && !inspectionPending &&
+    (effectiveInspectionOutcome === "SAFE_TO_PAY" || effectiveInspectionOutcome === "DO_NOT_PAY");
 
   useEffect(() => {
     if (!data) return;
@@ -269,7 +278,10 @@ export default function OrderPage() {
 
   async function settle(trigger: "user" | "agent" = "user") {
     if (busy) { if (trigger === "agent") setSettleCount(1); return; }
-    if (inspectionPending) { setMessage({ tone: "info", text: "Muse is still reading the checkout page. One moment." }); return; }
+    if (inspectionPending || (stored?.outcome !== "SAFE_TO_PAY" && stored?.outcome !== "DO_NOT_PAY" && inspection?.inspection.outcome !== "SAFE_TO_PAY" && inspection?.inspection.outcome !== "DO_NOT_PAY")) {
+      setMessage({ tone: "info", text: "The checkout has not been verified yet. Re-read the checkout first; PactPay will not attempt settlement on an uncertain reading." });
+      return;
+    }
     setSettleCount(null); setRetryCount(null);
     setBusy("settle"); setMessage(null);
     if (trigger === "user") logEvent("you", "Pressed “Check the offer and settle”.", `manual:${transactionId}`);
@@ -521,7 +533,7 @@ export default function OrderPage() {
           <div className="pp-card-head">
             <div>
               <h2 className="pp-h3">Muse reads the Sandbox checkout evidence <span className="pp-muse-chip" style={{ marginLeft: 6, fontSize: 11.5 }}>Meta Muse vision</span></h2>
-              <p className="pp-small pp-muted" style={{ marginTop: 4 }}>Two independent Meta readings of the page. Fixed rules decide if it matches what you approved. The settlement gate reads this verdict: anything but Safe to pay blocks the capture.</p>
+              <p className="pp-small pp-muted" style={{ marginTop: 4 }}>Two independent Meta readings check this checkout evidence. Safe to pay means this inspection passed; the settlement gate still rechecks the offer, authorization and every hard rule.</p>
             </div>
             {inspecting ? <span className="pp-badge pp-badge-info"><span className="pp-spinner pp-spinner-dark" aria-hidden="true" /> Inspecting</span>
               : stored ? <span className={`pp-badge ${stored.outcome === "SAFE_TO_PAY" ? "pp-badge-good" : stored.outcome === "DO_NOT_PAY" ? "pp-badge-bad" : "pp-badge-warn"}`}>{stored.outcome === "SAFE_TO_PAY" ? "Safe to pay" : stored.outcome === "DO_NOT_PAY" ? "Do not pay" : "Can't verify"}</span> : null}
@@ -548,10 +560,11 @@ export default function OrderPage() {
               )}
             </div>
           </div>
-          {heldNow && !inspecting && stored?.outcome === "CANNOT_VERIFY" && (
-            <div className="pp-row" style={{ marginTop: 14 }}>
-              <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => void runInspection(pageImage?.variant === "hostile" ? "hostile" : "faithful")}>Read this checkout again</button>
-              <span className="pp-tiny pp-muted">Unclear readings can be retried. Payment stays blocked until the evidence is verified.</span>
+          {heldNow && !inspecting && effectiveInspectionOutcome === "CANNOT_VERIFY" && (
+            <div className="pp-callout pp-callout-warn" style={{ marginTop: 14 }}>
+              <p style={{ fontWeight: 700 }}>The checkout is not verified yet. Your PayPal hold is still active.</p>
+              <p className="pp-small" style={{ marginTop: 4 }}>The readers did not agree clearly enough. No capture will be attempted until a fresh reading is safe to pay.</p>
+              <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" style={{ marginTop: 10 }} onClick={() => void runInspection(pageImage?.variant === "hostile" ? "hostile" : "faithful")}>Read this checkout again</button>
             </div>
           )}
           {heldNow && !inspecting && (inspection || stored) && (

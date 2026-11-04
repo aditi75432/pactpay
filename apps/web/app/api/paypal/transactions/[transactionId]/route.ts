@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuditEvents, getTransactionById, isUuid, verifyAuditChain } from "../../../../../../../lib/db";
+import { getAuditEvents, getProtectedDemoContext, getTransactionById, isUuid, verifyAuditChain } from "../../../../../../../lib/db";
 import { getLatestCheckoutInspection } from "../../../../../../../lib/checkout-inspections";
 import { requireTransactionAccess } from "../../../../../lib/ownership";
 
@@ -41,7 +41,10 @@ export async function GET(_request: Request, context: { params: Promise<{ transa
     if (!tx) return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
     const audit = await getAuditEvents(transactionId);
     const auditChain = await verifyAuditChain(transactionId);
-    const checkoutInspection = await getLatestCheckoutInspection(transactionId).catch(() => null);
+    const purchase = await getProtectedDemoContext(transactionId).catch(() => null);
+    // Match the UI to the exact same server-side offer revision that the settlement gate checks.
+    // Never display an old SAFE_TO_PAY verdict as if it applied to a changed offer.
+    const checkoutInspection = await getLatestCheckoutInspection(transactionId, purchase?.revision).catch(() => null);
     return NextResponse.json({ transaction: publicTransaction(tx), checkoutInspection, audit, auditChain, capturePerformedByPactPay: tx.capture_origin === "PACTPAY_GATE" });
   } catch (error) {
     console.error("PactPay transaction lookup failed", error);

@@ -219,7 +219,10 @@ export default function ShopRun({ approvalId, ruleCount, searchQuery, hostile, t
     const tick = async () => {
       const status = await readTransaction(hold.transactionId);
       if (stopped) return;
-      if (status === "AUTHORIZED" && !inspecting && (inspection || inspectError)) void runSettle(hold.transactionId);
+      const verdict = inspection?.inspection.outcome;
+      // An unclear reading is retryable. Never void a good hold merely because OCR/model readers disagreed once.
+      // A decisive SAFE_TO_PAY or DO_NOT_PAY verdict may proceed to the deterministic settlement gate.
+      if (status === "AUTHORIZED" && !inspecting && (verdict === "SAFE_TO_PAY" || verdict === "DO_NOT_PAY")) void runSettle(hold.transactionId);
     };
     void tick();
     const timer = window.setInterval(() => void tick(), 2500);
@@ -354,6 +357,13 @@ export default function ShopRun({ approvalId, ruleCount, searchQuery, hostile, t
             )}
             <div>
               {inspection && <InspectionResult result={inspection} attachedNote={inspection.attached ? "This verdict is attached to your order: the settlement gate reads it." : ""} />}
+              {inspection?.inspection.outcome === "CANNOT_VERIFY" && txStatus === "AUTHORIZED" && !inspecting && !settling && (
+                <div className="pp-callout pp-callout-warn" style={{ marginTop: 12 }}>
+                  <p style={{ fontWeight: 700 }}>The checkout could not be verified yet. Your PayPal hold is still active.</p>
+                  <p className="pp-small" style={{ marginTop: 4 }}>The readers need another look. PactPay will not attempt settlement until the checkout is verified.</p>
+                  <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" style={{ marginTop: 10 }} onClick={() => hold && void runInspection(hold.transactionId, usedHostile ? "hostile" : "faithful")}>Read checkout again</button>
+                </div>
+              )}
               {inspectError && (
                 <div className="pp-callout pp-callout-warn" role="alert">
                   <p style={{ fontWeight: 700 }}>The inspection couldn&apos;t finish.</p>

@@ -173,13 +173,15 @@ export async function saveCheckoutInspection(input: {
 }
 
 /** The most recent inspection for an order, or null when none was attached. */
-export async function getLatestCheckoutInspection(transactionId: string): Promise<StoredInspection | null> {
+export async function getLatestCheckoutInspection(transactionId: string, contextRevision?: number): Promise<StoredInspection | null> {
   await ensureSchema();
   const result = await pool().query<InspectionDbRow>(
     `SELECT id::text, outcome, headline, created_at::text, inspection_json, readers_json,
        evidence_hash, context_revision
-     FROM pactpay_checkout_inspections WHERE transaction_id = $1 ORDER BY created_at DESC LIMIT 1`,
-    [transactionId],
+     FROM pactpay_checkout_inspections
+     WHERE transaction_id = $1 AND ($2::integer IS NULL OR context_revision = $2)
+     ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [transactionId, contextRevision ?? null],
   );
   const row = result.rows[0];
   return row ? fromRow(row) : null;
