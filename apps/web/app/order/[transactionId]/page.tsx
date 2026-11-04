@@ -10,6 +10,8 @@ import { money, shortId } from "../../components/format";
 import { decideSettlement, describeAutonomy, DEFAULT_AUTONOMY, type Autonomy } from "@pactpay/pact-core/autonomy";
 import { addExcluded, logEvent, readAttempts, readAutonomy, readLog, registerAttempt } from "../../components/agentLog";
 import { offerKey } from "@pactpay/pact-core/seller-world";
+import InspectionResult, { type InspectionPayload } from "../../components/InspectionResult";
+import { svgToPngDataUrl } from "../../components/rasterize";
 
 type Tx = {
   transactionId: string; status: string; amount: string; currency: string;
@@ -71,6 +73,13 @@ export default function OrderPage() {
   const transactionId = typeof params?.transactionId === "string" ? params.transactionId : "";
   const [data, setData] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [stored, setStored] = useState<{ outcome: string; headline: string } | null>(null);
+  const [storedLoaded, setStoredLoaded] = useState(false);
+  const [inspection, setInspection] = useState<InspectionPayload | null>(null);
+  const [inspecting, setInspecting] = useState<string | null>(null);
+  const [inspectError, setInspectError] = useState<string | null>(null);
+  const [pageImage, setPageImage] = useState<{ src: string; merchant: string; variant: string } | null>(null);
+  const inspectStarted = useRef(false);
   const [busy, setBusy] = useState<null | "scenario" | "settle" | "paypal">(null);
   const [message, setMessage] = useState<{ tone: "info" | "bad" | "good"; text: string } | null>(null);
   const [live, setLive] = useState<Live | null>(null);
@@ -85,6 +94,12 @@ export default function OrderPage() {
       if (!response.ok) throw new Error(payload.error ?? "We couldn't load this order.");
       setData(payload);
       setLoadError(null);
+      try {
+        const extra = await fetch(`/api/paypal/transactions/${encodeURIComponent(transactionId)}`, { cache: "no-store" });
+        const body = await extra.json() as { checkoutInspection?: { outcome: string; headline: string } | null };
+        setStored(body.checkoutInspection ?? null);
+      } catch { /* the inspection note is optional */ }
+      setStoredLoaded(true);
     } catch (caught) {
       setLoadError(caught instanceof Error ? caught.message : "We couldn't load this order.");
     }
@@ -160,10 +175,46 @@ export default function OrderPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
+  const approvalIdForInspection = useMemo(() => {
+    try { const raw = window.sessionStorage.getItem("pactpay.activeApproval.v1"); const parsed = raw ? JSON.parse(raw) as { approvalId?: unknown } : null; return parsed && typeof parsed.approvalId === "string" ? parsed.approvalId : null; } catch { return null; }
+  }, []);
+
+  const runInspection = useCallback(async (variant: "faithful" | "hostile") => {
+    if (!approvalIdForInspection) { setInspectError("The rules you approved aren't in this browser session, so the checkout can't be inspected here."); return; }
+    setInspecting("Drawing the checkout page this payment would be made on…"); setInspectError(null); setInspection(null);
+    try {
+      const pageResponse = await fetch(`/api/shop/checkout-page?tx=${encodeURIComponent(transactionId)}&variant=${variant}`, { cache: "no-store" });
+      const pagePayload = await pageResponse.json() as { svg?: string; width?: number; height?: number; page?: { merchant: string; variant: string }; error?: string };
+      if (!pageResponse.ok || !pagePayload.svg || !pagePayload.width || !pagePayload.height || !pagePayload.page) throw new Error(pagePayload.error ?? "Couldn't load the checkout page.");
+      const png = await svgToPngDataUrl(pagePayload.svg, pagePayload.width, pagePayload.height);
+      setPageImage({ src: png, merchant: pagePayload.page.merchant, variant: pagePayload.page.variant });
+      setInspecting("Two Meta Muse models are reading the page independently…");
+      const response = await fetch("/api/inspector/checkout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ approvalId: approvalIdForInspection, image: png, transactionId }) });
+      const payload = await response.json() as InspectionPayload & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "The inspection failed.");
+      setInspection(payload); setStored({ outcome: payload.inspection.outcome, headline: payload.inspection.headline });
+    } catch (caught) {
+      setInspectError(caught instanceof Error ? caught.message : "The inspection failed.");
+    } finally { setInspecting(null); }
+  }, [approvalIdForInspection, transactionId]);
+
+  // The moment the hold is approved, Muse reads the checkout page. Settlement waits for the verdict.
+  useEffect(() => {
+    if (!data || !storedLoaded || inspectStarted.current) return;
+    if (data.transaction.status !== "AUTHORIZED") return;
+    inspectStarted.current = true;
+    if (stored) return; // a verdict from earlier in this order already exists
+    let hostile = false;
+    try { hostile = (JSON.parse(window.sessionStorage.getItem("pactpay.demoControls.v1") ?? "{}") as { hostile?: boolean }).hostile === true; } catch { /* default */ }
+    void runInspection(hostile ? "hostile" : "faithful");
+  }, [data, storedLoaded, stored, runInspection]);
+
+  const inspectionPending = Boolean(data) && data!.transaction.status === "AUTHORIZED" && (!storedLoaded || inspecting !== null || (!stored && !inspectError && !inspection));
+
   const heldNow = status === "AUTHORIZED";
   const amountNow = Number(data?.transaction.amount ?? 0);
   const agentDecision = decideSettlement(autonomy, amountNow, "agent");
-  const agentMayRelease = heldNow && agentDecision.allowed && !autoPaused && !agentRefusal;
+  const agentMayRelease = heldNow && agentDecision.allowed && !autoPaused && !agentRefusal && !inspectionPending;
 
   useEffect(() => {
     if (!data) return;
@@ -218,6 +269,7 @@ export default function OrderPage() {
 
   async function settle(trigger: "user" | "agent" = "user") {
     if (busy) { if (trigger === "agent") setSettleCount(1); return; }
+    if (inspectionPending) { setMessage({ tone: "info", text: "Muse is still reading the checkout page. One moment." }); return; }
     setSettleCount(null); setRetryCount(null);
     setBusy("settle"); setMessage(null);
     if (trigger === "user") logEvent("you", "Pressed “Check the offer and settle”.", `manual:${transactionId}`);
@@ -465,17 +517,44 @@ export default function OrderPage() {
           </section>
         )}
 
-        {["CAPTURED", "VOIDED", "POLICY_BLOCKED"].includes(tx.status) ? null : (
-          <section className="pp-card-flat pp-enter" aria-label="Checkout inspection">
-            <div className="pp-card-head" style={{ marginBottom: 0 }}>
-              <div>
-                <h2 className="pp-h3">Inspect the real checkout page <span className="pp-muse-chip" style={{ marginLeft: 6, fontSize: 11.5 }}>Meta Muse vision</span></h2>
-                <p className="pp-small pp-muted" style={{ marginTop: 4 }}>Upload a screenshot of the merchant&rsquo;s checkout. Muse reads it twice and fixed rules judge it. If it isn&rsquo;t safe, PactPay will refuse to capture and void this hold.</p>
-              </div>
-              <a className="pp-btn pp-btn-secondary pp-btn-sm" href={`/inspector?tx=${encodeURIComponent(tx.transactionId)}`}>Inspect checkout</a>
+        <section className="pp-card pp-enter" aria-label="Checkout inspection">
+          <div className="pp-card-head">
+            <div>
+              <h2 className="pp-h3">Muse reads the real checkout page <span className="pp-muse-chip" style={{ marginLeft: 6, fontSize: 11.5 }}>Meta Muse vision</span></h2>
+              <p className="pp-small pp-muted" style={{ marginTop: 4 }}>Two independent Meta readings of the page. Fixed rules decide if it matches what you approved. The settlement gate reads this verdict: anything but Safe to pay blocks the capture.</p>
             </div>
-          </section>
-        )}
+            {inspecting ? <span className="pp-badge pp-badge-info"><span className="pp-spinner pp-spinner-dark" aria-hidden="true" /> Inspecting</span>
+              : stored ? <span className={`pp-badge ${stored.outcome === "SAFE_TO_PAY" ? "pp-badge-good" : stored.outcome === "DO_NOT_PAY" ? "pp-badge-bad" : "pp-badge-warn"}`}>{stored.outcome === "SAFE_TO_PAY" ? "Safe to pay" : stored.outcome === "DO_NOT_PAY" ? "Do not pay" : "Can't verify"}</span> : null}
+          </div>
+          {inspecting && <p className="pp-muted" role="status"><span className="pp-spinner pp-spinner-dark" aria-hidden="true" /> {inspecting}</p>}
+          <div style={{ display: "grid", gap: 16 }}>
+            {pageImage && (
+              <figure className="pp-checkout-thumb">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={pageImage.src} alt={`The checkout page from ${pageImage.merchant}`} />
+                <figcaption className="pp-tiny pp-muted">Drawn from this order&apos;s sandbox merchant terms and sent to Muse like any screenshot.{pageImage.variant === "hostile" ? " Simulation: the seller turned hostile." : ""}</figcaption>
+              </figure>
+            )}
+            <div>
+              {inspection && <InspectionResult result={inspection} attachedNote={inspection.attached ? "This verdict is attached to your order: the settlement gate reads it." : ""} />}
+              {!inspection && stored && !inspecting && <p className="pp-small"><strong>{stored.headline}</strong> This verdict is attached to the order and the gate reads it.</p>}
+              {!stored && !inspecting && !inspectError && !heldNow && <p className="pp-small pp-muted">The checkout is inspected automatically once the hold is approved.</p>}
+              {inspectError && (
+                <div className="pp-callout pp-callout-warn" role="alert">
+                  <p style={{ fontWeight: 700 }}>The inspection couldn&apos;t finish.</p>
+                  <p className="pp-small" style={{ marginTop: 4 }}>{inspectError} Nothing was decided. Without a verdict the other gate checks still apply.</p>
+                  {heldNow && <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" style={{ marginTop: 10 }} onClick={() => void runInspection("faithful")}>Inspect again</button>}
+                </div>
+              )}
+            </div>
+          </div>
+          {heldNow && !inspecting && (inspection || stored) && (
+            <div className="pp-row" style={{ marginTop: 14 }}>
+              <button type="button" className="pp-link-btn" onClick={() => void runInspection(pageImage?.variant === "hostile" ? "faithful" : "hostile")}>{pageImage?.variant === "hostile" ? "Re-inspect the honest page" : "Simulate: what if the seller turns hostile?"}</button>
+              <span className="pp-tiny pp-muted">Simulation only. The newest verdict replaces the old one.</span>
+            </div>
+          )}
+        </section>
 
         <AttemptsPanel currentId={tx.transactionId} currentStatus={tx.status} />
 

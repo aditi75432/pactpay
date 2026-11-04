@@ -4,6 +4,7 @@
 
 | Diagram | What it shows |
 |---|---|
+| [00 One workflow](diagrams/00-one-workflow.png) | The single Shop page workflow and who acts at each step |
 | [01 System architecture](diagrams/01-system-architecture.png) | Entry points, Meta Muse layer, deterministic core, external systems |
 | [02 Trust boundary](diagrams/02-trust-boundary.png) | What Muse does vs what fixed code does; no model has authority |
 | [03 Hold, inspect, settle](diagrams/03-hold-inspect-settle.png) | Order lifecycle, gate facts, how the inspection verdict affects settlement |
@@ -87,4 +88,4 @@ Failure states are explicit and terminal where appropriate. Any retry must be id
 
 ## Checkout inspection and the gate
 
-The Inspector's verdict (`SAFE_TO_PAY`, `DO_NOT_PAY`, `CANNOT_VERIFY`) is stored per transaction in `pactpay_checkout_inspections`. At settlement the route reads the latest one and passes `checkoutInspection: none | safe | blocked | unverified` into `evaluateSettlementGate`, which adds `CHECKOUT_INSPECTION_BLOCKED` or `CHECKOUT_INSPECTION_UNVERIFIED` as blocking reasons. A failed lookup is treated as `unverified` (fail closed). `none` changes nothing.
+Once the hold is confirmed, the order page calls `GET /api/shop/checkout-page`, which draws the checkout page from the order's stored sandbox terms (`pact-core/src/checkout-page.ts`), rasterizes it in the browser and posts it to `POST /api/inspector/checkout` with the order id. The Inspector's verdict (`SAFE_TO_PAY`, `DO_NOT_PAY`, `CANNOT_VERIFY`) is stored per transaction in `pactpay_checkout_inspections`. At settlement the route reads the latest one and passes `checkoutInspection: none | safe | blocked | unverified` into `evaluateSettlementGate`, which adds `CHECKOUT_INSPECTION_BLOCKED` or `CHECKOUT_INSPECTION_UNVERIFIED` as blocking reasons. A failed lookup is treated as `unverified` (fail closed). `none` changes nothing.

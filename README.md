@@ -9,13 +9,13 @@ Meta's Muse models do the seeing, hearing, reading and deciding-what-to-try. A s
 > **Built for:** Meta Global AI Developer Hackathon · Indie Developer track · Theme: Build for Your World
 <!-- HACKATHON:END -->
 
-![PactPay system architecture](docs/diagrams/01-system-architecture.png)
+![One workflow](docs/diagrams/00-one-workflow.png)
 
 ---
 
 ## Contents
 
-[Problem](#the-problem) · [Solution](#the-solution) · [Why it matters](#why-it-matters) · [Who benefits](#who-benefits) · [Market](#market-and-business-model) · [Competition and novelty](#competition-and-novelty) · [Tools used](#tools-used) · [How it works](#how-it-works) · [What you can do](#what-you-can-do) · [Why it can't be tricked](#why-it-cant-be-tricked) · [Try it](#try-it) · [Run locally](#run-it-locally) · [Limitations](#limitations-and-constraints) · [Layout](#repository-layout)
+[Problem](#the-problem) · [Solution](#the-solution) · [Why it matters](#why-it-matters) · [Who benefits](#who-benefits) · [Market](#market-and-business-model) · [Competition and novelty](#competition-and-novelty) · [Tools used](#tools-used) · [How it works](#how-it-works) · [What you can do](#what-you-can-do) · [What protects the money](#what-protects-the-money-and-what-is-only-a-tripwire) · [Try it](#try-it) · [Run locally](#run-it-locally) · [Limitations](#limitations-and-constraints) · [Layout](#repository-layout)
 
 ## The problem
 
@@ -96,7 +96,7 @@ Several efforts make agent payments safer. They mostly answer *who may pay* and 
 | Tool | Role | Where |
 |---|---|---|
 | **Muse Spark 1.3** (Meta Model API) | **Primary model.** Writes rules (strict `json_schema`), runs the tool-calling shopping agent, reads checkout screenshots (vision), reads seller listings, explains outcomes | `POST api.meta.ai/v1/chat/completions` with `tools`, `response_format`, `image_url`, `reasoning_effort` |
-| **Muse Spark Open** (open weights, via Baseten) | Same features on open weights, and the **second independent reader** in the Checkout Inspector | OpenAI-compatible chat completions on `inference.baseten.co/v1` |
+| **Muse Spark Open** (open weights, via Baseten) | The **second independent reader** in the Checkout Inspector, and the same features on open weights | OpenAI-compatible chat completions on `inference.baseten.co/v1`, model `meta-models/muse-spark-open` (no JSON mode, so JSON is requested in the prompt and validated) |
 | **Muse Voice Transcribe 1.0** | "Say it instead": speak a purchase, get the text | `POST api.meta.ai/v1/asr/transcribe` (WAV, push-to-talk) |
 | PayPal Sandbox (Orders + Payments) | Authorize, capture, void, read-back. Test money only | `lib/paypal.ts` |
 | Channel3 | Real product catalog and offers; product-detail refresh at settlement | `lib/` catalog modules |
@@ -150,29 +150,41 @@ More diagrams: [Checkout Inspector](docs/diagrams/06-checkout-inspector.png) · 
 
 ## What you can do
 
-1. **Say it.** Hold the mic and describe a purchase. Muse Voice Transcribe turns it into text.
-2. **Rules from plain words.** Muse Spark drafts editable rules (budget, must-haves, preferences). You approve; they're hashed and locked server-side. The badge says exactly which model wrote them.
-3. **Muse Agent** (`/muse-agent`). Give it a job and watch it call tools live: read rules, search real stores, rank offers, ask for a PayPal hold. Click **Try to tempt it** and watch PactPay refuse. A person approves the hold; the gate settles.
-4. **Hold, capture and action centre.** Authorize first, capture later. The order page shows the hold, the live PayPal state, retries and recovery, and one place to act: inspect, settle, void.
-5. **Checkout Inspector** (`/inspector`). Upload any checkout screenshot. Muse reads it twice; the gate returns **Safe to pay / Do not pay / Can't verify** with a rule-by-rule receipt. Five built-in pages and a one-click suite prove every verdict. Opened from an order (`/inspector?tx=…`), the verdict is attached to that order and the settlement gate reads it.
-6. **Discovery and evidence.** Live catalog search with server-side snapshots, evidence claims that need a source on the merchant's own domain and human review, and a seller-text reader that quotes only what the listing says, labelled *seller-stated, not verified*, with a live prompt-injection test.
-7. **Marketplace / bring your own agent.** A limited, expiring agent key plus an MCP server and HTTP gateway. `pnpm agent:redteam` shows a misbehaving agent refused; `pnpm agent:muse` runs a Muse agent from the terminal. The **For AI platforms** page explains the integration.
-8. **Activity + proof.** Decision receipts (PASS / FAIL / UNKNOWN), a hash-chained audit trail, and an AG Grid control center.
+One workflow that starts on the Shop page (`/`) and carries on through the same pages every time: **Shop → Agent → PayPal → Order**. The Muse agent and the checkout inspector are steps in it, not separate tools, and a step tracker shows where you are.
+
+1. **Say it** (`/`). Hold the mic and describe a purchase. Muse Voice Transcribe turns it into text; spoken numbers ("one hundred dollars") are converted to digits before rules are drafted.
+2. **Approve the rules** (`/`). Muse Spark drafts editable rules (budget, must-haves, preferences). You approve; they're hashed and locked server-side. The badge says which model wrote them.
+3. **The agent shops, live** (`/agent`). A tool-calling Muse agent reads your rules, searches real stores, ranks offers and asks for a PayPal hold. Every tool call streams onto the page, and a table shows each offer with a verdict and the reason (so "nothing passed" is always explained). Its only tools are PactPay's gateway, so it can't edit a rule, raise a limit or release money.
+4. **You approve the hold on PayPal.** The page offers a button and a 6-second auto-continue.
+5. **The checkout is inspected automatically** (`/order/...`). As soon as the hold is confirmed, PactPay draws the checkout page the payment would be made on and two Meta models (Muse Spark 1.3 and Muse Spark Open when both keys are set) read it independently. Fixed code requires the readings to agree, checks the charges add up, and checks for text aimed at an AI. Verdict: **Safe to pay / Do not pay / Can't verify**, with a rule-by-rule receipt. Autopilot and the manual button wait for it.
+6. **The gate decides.** Fixed code re-fetches the live offer and PayPal hold, re-checks every rule **and the inspection verdict**, and captures once or voids. Anything but *Safe to pay* blocks the capture, even if you approved the hold.
+7. **Receipt and proof.** A plain-English outcome, a full receipt, decision receipts (PASS / FAIL / UNKNOWN), a hash-chained audit trail and an AG Grid control center.
+
+Demo controls (clearly labelled simulations, before you approve): **make the seller's checkout page hostile** (a $9.99 fee that isn't itemized plus small print aimed at the agent) and **try to tempt the agent** ("ignore my limits").
+
+Also in the app:
+
+- **Discovery and evidence.** Live catalog search with server-side snapshots, evidence claims that need a source on the merchant's own domain and human review, and a seller-text reader that quotes only what the listing says, labelled *seller-stated, not verified*, with a live prompt-injection test.
+- **Marketplace / bring your own agent.** A limited, expiring agent key plus an MCP server and HTTP gateway. `pnpm agent:redteam` shows a misbehaving agent refused; `pnpm agent:muse` runs a Muse agent from the terminal. The **For AI platforms** page explains the integration.
+- **Rule-based fallback agent** (`/agent?mode=classic`), used automatically if no Meta key is configured.
 
 ![Agent keys and marketplace](docs/diagrams/04-agent-key-marketplace.png)
 
-## Why it can't be tricked
+## What protects the money (and what is only a tripwire)
 
-- **No authority for the model.** Its only tools are the gateway; there is no tool to edit rules, raise a limit or release money (ADR-002).
-- **Untrusted input stays data.** Seller text and screenshot text are scanned and labelled hostile; model output is parsed, bounded and validated before use.
+- **Fixed rules are the protection.** Budget, currency, arithmetic, freshness and the settlement gate are plain code with no model in it. If a page or a listing talks an AI into agreeing to something, the numbers still have to fit your approved limits, or the hold is voided. The model has no tool to edit rules, raise a limit or release money (ADR-002).
+- **Injection detection is an extra tripwire, not the guarantee.** Each vision reader returns a structured flag, `addressedToAI` plus the quoted text, for any text aimed at an AI. A second, deterministic scan looks for known patterns, and it does not block on a single "complete your order now" style phrase, because honest checkout banners say that. Paraphrased attacks can slip past a pattern list; the flag from two readers and the budget rules are why that does not move money.
 - **Unknown is never safe.** Unreadable page, missing field, missing shipping or tax, or two readings that disagree all end in *Can't verify*.
-- **Both readings are scanned** for instructions aimed at an AI, so one reader missing it isn't enough.
 - **Autonomy is server-enforced.** The agent key is bound to one approval, expires in 24 hours, is stored as a hash, and always acts as the agent.
 - **Authorize, then capture** (ADR-001). Uncertain outcomes go to review, never a blind retry.
 
+## Run it all on open weights
+
+For the open-weights path, set `AI_PROVIDER=baseten` and `BASETEN_API_KEY` (model `meta-models/muse-spark-open`). Rules, the agent and the inspector then all run on Muse Spark Open via Baseten. Muse Spark Open has no JSON mode, so JSON is requested in the prompt and validated; tool-calling on Baseten is unverified here, and the agent falls back to the rule-based path if it fails. See [`docs/BASETEN.md`](docs/BASETEN.md).
+
 ## Try it
 
-**No PayPal needed for the Meta features:** open **Checkout check**, pick *A page that talks to the agent*, press **Inspect**, then **Run the suite**. Full guided path in [`docs/JUDGES.md`](docs/JUDGES.md). Hosted app login: `judge` / `PactPay-Judge-2026` (shared demo account; create your own for a private view).
+Open the Shop page, press **Turn this into rules**, tick **make the seller's checkout page hostile**, approve, and watch the workflow run from agent to blocked capture. Full guided path in [`docs/JUDGES.md`](docs/JUDGES.md). Hosted app login: `judge` / `PactPay-Judge-2026` (shared demo account; create your own for a private view).
 
 ## Run it locally
 
@@ -188,7 +200,7 @@ pnpm dev                                 # http://localhost:3000
 
 If you set `AI_TIMEOUT_MS`, give it a number (for example `40000`) or leave it commented out. The default is generous enough for Muse Spark's reasoning calls.
 
-The Inspector (demo rules) and voice input need only `MODEL_API_KEY`. The full shop-and-settle flow also needs PayPal Sandbox and Channel3 keys. Without a Meta key the app falls back to a basic rule parser and says so on screen.
+Rule drafting and voice input need only `MODEL_API_KEY`. The full shop, inspect and settle workflow also needs PayPal Sandbox and Channel3 keys. Without a Meta key the app falls back to a basic rule parser and says so on screen.
 
 Verify:
 
@@ -204,8 +216,9 @@ pnpm --filter web build
 Full list: [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md). The ones that matter most:
 
 - **Sandbox only.** PayPal Sandbox test money; no retailer order is ever placed. Shipping and tax are fixed test values, and the seller changing the deal is a labelled simulation.
-- **The Inspector reads a screenshot you provide.** It is not yet attached to a live retailer checkout. A browser extension or merchant API would remove that step.
-- **The Inspector affects settlement only when an inspection is attached to the order.** With none attached, the other checks decide, as before.
+- **The checkout page is drawn from sandbox merchant terms.** There is no real retailer checkout to screenshot, so PactPay renders the page a payment would be made on from the order's stored terms and sends it to Muse like any screenshot. A browser extension or merchant API would capture the real page; the Inspector path doesn't change.
+- **The hostile checkout is a simulation**, labelled as one everywhere it appears.
+- **A verdict affects settlement only when one is attached to the order.** The Shop workflow always attaches one; other callers (for example the agent gateway on its own) are decided by the other checks, as before.
 - **It can't catch a model that misreads in the same way twice.** Two readings, cross-model agreement and arithmetic make that unlikely, not impossible. It is a guard, not a guarantee.
 - **A person still approves each hold on PayPal.**
 - **Live Meta behavior** was tested against a local mock that checks the documented request shape. Run it with your own key before relying on it.
@@ -214,7 +227,7 @@ Full list: [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md). The ones that matter mo
 ## Repository layout
 
 ```
-apps/web              Next.js app: shop flow, Muse Agent, Checkout Inspector, order page, Activity, API routes
+apps/web              Next.js app: the one-page Shop workflow (agent + inspection + settle), order page, Activity, API routes
 packages/pact-core    Pure TypeScript: policy engine, settlement gate, checkout inspection, agent loop,
                       untrusted-text guard, audit chain, autonomy (184 tests)
 lib                   Server modules: Meta model gateway (llm-provider.ts), PostgreSQL, PayPal, accounts, inspections
@@ -230,7 +243,7 @@ PactPay's policy engine, settlement gate, PayPal Sandbox flow, agent keys, evide
 - `lib/llm-provider.ts`: the Meta model gateway (Meta Model API + Muse Spark Open)
 - `packages/pact-core/src/checkout-inspection.ts`, `inspection-samples.ts`, `agent-loop.ts`, `wav.ts`, `ai-labels.ts`
 - `lib/checkout-inspections.ts` and the settlement-gate `checkoutInspection` fact
-- `apps/web/app/inspector`, `apps/web/app/muse-agent`, `apps/web/app/api/{inspector,muse-agent,voice,ai}`, `components/VoiceButton.tsx`
+- `apps/web/app/{page.tsx,agent/MuseAgent.tsx,order/[transactionId]/page.tsx}`, `components/{museStream,InspectionResult,rasterize}`, `apps/web/app/api/{inspector,muse-agent,shop,voice,ai}`, `components/VoiceButton.tsx`, `pact-core/src/checkout-page.ts`
 - Rule drafting, seller-text reading and outcome explanation running on Muse; `scripts/llm-agent.mjs`
 
 ## Docs

@@ -9,6 +9,7 @@ import VoiceButton from "./components/VoiceButton";
 import { previewChannel3TestQuote } from "@pactpay/pact-core/settlement-demo";
 import { logEvent, resetRun, saveAutonomy } from "./components/agentLog";
 import StepTracker from "./components/StepTracker";
+import { normalizeSpokenNumbers } from "@pactpay/pact-core/spoken-numbers";
 
 type CompilerName = "MODEL" | "RULE_BASED_FALLBACK";
 type Compilation = {
@@ -22,6 +23,7 @@ type Compilation = {
   pact: PurchasePact;
 };
 
+const FLOW_STEPS = ["Say it", "Approve rules", "Agent shops", "Inspect checkout", "Settle"] as const;
 const STORAGE_KEY = "pactpay.activePact.v1";
 const INTENT_KEY = "pactpay.activeIntent.v1";
 const APPROVAL_KEY = "pactpay.activeApproval.v1";
@@ -53,6 +55,8 @@ export default function Home() {
   const [approving, setApproving] = useState(false);
   const [autonomyMode, setAutonomyMode] = useState<AutonomyMode>("ASK_ABOVE");
   const [autonomyLimit, setAutonomyLimit] = useState("50");
+  const [hostile, setHostile] = useState(false);
+  const [tempt, setTempt] = useState(false);
 
   const otherRules = useMemo(
     () => (compilation?.pact.constraints ?? []).filter((rule) => rule.field !== "currency" && !isPriceCap(rule)),
@@ -160,6 +164,7 @@ export default function Home() {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload.pact));
       sessionStorage.setItem(APPROVAL_KEY, JSON.stringify({ approvalId: payload.approvalId, pactId: payload.pact.id, pactHash: payload.pactHash }));
       sessionStorage.setItem(INTENT_KEY, JSON.stringify({ title: compilation.title, originalIntent: intent, searchQuery: compilation.searchQuery, compiler: compilation.compiler }));
+      try { sessionStorage.setItem("pactpay.demoControls.v1", JSON.stringify({ hostile, tempt })); } catch { /* optional */ }
       window.location.href = `/agent?query=${encodeURIComponent(compilation.searchQuery)}`;
     } catch (caught) {
       setApproving(false);
@@ -173,12 +178,12 @@ export default function Home() {
         <p className="pp-eyebrow">Safer shopping with AI agents</p>
         <h1 className="pp-h1" style={{ marginTop: 14, maxWidth: 14 + "em" }}>Let your AI agent shop. Keep the final say.</h1>
         <p className="pp-lede" style={{ marginTop: 18 }}>
-          Tell PactPay what you want. It finds real offers and puts your payment on hold. The money is released only if the offer still matches the rules you approved. If the seller changes the deal, the hold is cancelled and you aren&apos;t charged.
+          Say what you want. A Meta Muse agent shops for you, PayPal holds the money, and two Muse models read the real checkout page before anything is paid. A fixed gate, not an AI, decides whether the money moves. If anything is off, the hold is cancelled and you aren&apos;t charged.
         </p>
       </section>
 
       <div style={{ marginTop: 36 }}>
-        <StepTracker current={compilation ? 1 : 0} />
+        <StepTracker current={compilation ? 1 : 0} labels={FLOW_STEPS} />
         <div className="pp-grid-2">
           <section className="pp-card" aria-labelledby="ask-title">
             <div className="pp-card-head">
@@ -189,7 +194,7 @@ export default function Home() {
             </div>
             <label className="pp-sr" htmlFor="intent">Describe your purchase</label>
             <textarea id="intent" className="pp-textarea" value={intent} onChange={(event) => setIntent(event.target.value)} maxLength={1200} />
-            <VoiceButton onTranscript={(heard) => { setIntent(heard.slice(0, 1200)); setCompilation(null); setError(null); }} />
+            <VoiceButton onTranscript={(heard) => { setIntent(normalizeSpokenNumbers(heard).slice(0, 1200)); setCompilation(null); setError(null); }} />
             <div className="pp-row" style={{ margin: "14px 0 18px" }}>
               <span className="pp-tiny pp-muted" style={{ fontWeight: 700 }}>Try:</span>
               {EXAMPLES.map((example) => (
@@ -296,6 +301,20 @@ export default function Home() {
                   })}
                 </fieldset>
 
+                <label className="pp-auto-option" style={{ marginTop: 14 }} data-selected={hostile}>
+                  <input type="checkbox" checked={hostile} onChange={(event) => setHostile(event.target.checked)} />
+                  <span>
+                    <strong>Demo control: make the seller&apos;s checkout page hostile</strong>
+                    <span className="pp-small pp-muted" style={{ display: "block" }}>Simulation only. The checkout page for your hold gets a $9.99 fee that isn&apos;t itemized and small print aimed at the agent. Watch Muse and the gate catch it.</span>
+                  </span>
+                </label>
+                <label className="pp-auto-option" style={{ marginTop: 10 }} data-selected={tempt}>
+                  <input type="checkbox" checked={tempt} onChange={(event) => setTempt(event.target.checked)} />
+                  <span>
+                    <strong>Demo control: try to tempt the agent</strong>
+                    <span className="pp-small pp-muted" style={{ display: "block" }}>The agent is told to &ldquo;ignore my limits&rdquo;. Watch PactPay refuse anything outside your rules.</span>
+                  </span>
+                </label>
                 {error && <p className="pp-callout pp-callout-bad" role="alert" style={{ marginTop: 14 }}>{error}</p>}
                 <button type="button" className="pp-btn pp-btn-primary pp-btn-block" style={{ marginTop: 18 }} onClick={approveAndFindOffers} disabled={approving}>
                   {approving ? <><span className="pp-spinner" aria-hidden="true" /> Saving your approval…</> : autonomyMode === "ASK_ALWAYS" ? "Approve these rules and find offers" : "Approve and let the agent start"}

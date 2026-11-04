@@ -1,33 +1,25 @@
 # Judge guide
 
-PactPay runs in **test mode**: PayPal Sandbox money, no retailer order is ever placed. Sign in with `judge` / `PactPay-Judge-2026` or create an account.
+PactPay runs in **test mode**: PayPal Sandbox money, no retailer order is ever placed. Sign in with `judge` / `PactPay-Judge-2026` or create an account. The workflow starts on the Shop page (`/`) and continues through the Agent and Order pages.
 
-## 2-minute path (Meta features, no PayPal needed)
+## The 3-minute path (the whole product, one workflow)
 
-1. Open **Checkout check**. Pick **A page that talks to the agent** and press **Inspect this checkout**. Muse reads it twice; the numbers are fine, but hidden small print is aimed at an AI. Verdict: **Do not pay**. The footer shows which Meta model(s) read it.
-2. Press **Run the suite**. Five pages, five verdicts: one safe, three blocked (hidden fee, hidden instructions, over budget), one *Can't verify*.
-3. On **Shop**, tap **Say it instead**, speak a request, then **Turn this into rules**. The badge shows which Muse model wrote them.
-
-## Full path (agent + payment gate)
-
-4. Approve the rules (keep **Ask me above a limit**). Open **Muse Agent**, press **Run the Muse agent**. Watch it read rules, search live stores, rank offers, and place a hold.
-5. Approve the hold on PayPal Sandbox (buyer test login is in the submission notes), then press **I approved: let the agent settle**.
-6. Run it again with **Try to tempt it**, or set autonomy to *Ask me every time*, and watch PactPay refuse.
-7. Open **Activity** for decision receipts and the audit trail.
-
-## The proof that the Inspector stops a real capture (3 minutes, needs PayPal Sandbox)
-
-1. After step 5 above, open the order page and use **Inspect the real checkout page**. It opens the Inspector bound to that order (`/inspector?tx=…`).
-2. Run **A page that talks to the agent** (or the hidden-fee page). Verdict: **Do not pay**, and the note says it was attached to the order.
-3. Back on the order, press settle. The gate returns `CHECKOUT_INSPECTION_BLOCKED` and voids the hold. Nothing is captured.
-4. Try again on a fresh hold with **An honest checkout**: verdict *Safe to pay*, and the other rules decide.
-5. Without any inspection attached, settlement behaves as before. The Inspector only has a say when you ask it to look.
+1. Press **Turn this into rules** (or tap **Say it instead** and speak). The badge shows which Muse model wrote the rules.
+2. Tick **Demo control: make the seller's checkout page hostile** (a labelled simulation), keep **Ask me above a limit**, press **Approve and let the agent start**.
+3. On the **Agent** page, watch the Muse agent call its tools live (read rules, search real stores, rank offers, place a PayPal hold). The offers table shows every offer with its verdict and reason.
+4. Press **Approve on PayPal (Sandbox)** (or let the 6s countdown run) and approve with the Sandbox buyer login.
+5. On the **Order** page the **checkout inspection starts by itself**: you see the checkout page, two Meta models read it (the footer names them), and fixed rules return **Do not pay**: a fee that isn't itemized and a sentence aimed at the agent. Autopilot waits for it, then the gate **blocks the capture and releases the hold**. You aren't charged, and the reason is on record.
+6. Go back to **Shop**, leave the hostile box unticked, and run it again: the inspection says **Safe to pay** and the gate captures once.
+7. Optional: tick **try to tempt the agent** and watch PactPay refuse. Open **Activity** for decision receipts and the audit trail; open **For AI platforms** for the agent-key marketplace flow.
 
 ## What to look for
 
-- Muse proposes; fixed code disposes. There is no model in the settlement path.
-- Unknown is never treated as safe.
-- Everything simulated is labeled. Limits are in `docs/LIMITATIONS.md`.
+- **Muse proposes; fixed code disposes.** There is no model in the settlement path.
+- **Two independent Meta readers** (Muse Spark 1.3 and the open-weight Muse Spark Open) must agree; unknown is never treated as safe.
+- **The inspection verdict is read by the settlement gate.** Even if you approve the hold, a Do not pay verdict blocks the capture.
+- Everything simulated is labelled. Limits are in `docs/LIMITATIONS.md`.
 
-- The Inspector reads a screenshot you upload; it is not yet attached to a live retailer page.
-- `pnpm --filter @pactpay/pact-core test` runs 184 tests with no network, including the settlement-inspection tests.
+## Be aware
+
+- The checkout page is drawn from the order's sandbox merchant terms (there is no real retailer checkout in a sandbox) and sent to Muse like any screenshot. A real deployment would capture the merchant's own page.
+- `pnpm --filter @pactpay/pact-core test` runs 206 tests with no network, including the gate and inspection tests.

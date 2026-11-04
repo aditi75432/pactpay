@@ -49,3 +49,9 @@
 @media (max-width: 860px) { .pp-header-right { margin-left: 0; width: 100%; justify-content: flex-start; } .pp-nav { flex-wrap: wrap; } }
 .pp-header-inner { max-width: 1440px; height: auto; min-height: 64px; padding-top: 8px; padding-bottom: 8px; }
 .pp-nav { flex: 1 1 auto; margin-left: 4px; }
+
+/* Shop workflow: checkout thumbnail from the inspection step */
+.pp-checkout-thumb { margin: 0; max-width: 520px; }
+.pp-checkout-thumb img { width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--pp-line); display: block; }
+.pp-checkout-thumb figcaption { margin-top: 8px; }
+.pp-receipt th { white-space: normal; } .pp-receipt td, .pp-receipt th { overflow-wrap: anywhere; }

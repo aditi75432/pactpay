@@ -26,6 +26,10 @@ export interface CheckoutReading {
   pageNotes: string[];
   /** False when the image isn't a checkout page or can't be read. */
   readable: boolean;
+  /** The reader's own judgement that some text on the page is addressed to an AI agent or assistant (not to a human shopper). */
+  addressedToAI?: boolean;
+  /** The text the reader says is addressed to an AI, word for word. */
+  aiAddressedText?: string | null;
 }
 
 const MONEY_MAX = 1_000_000;
@@ -42,7 +46,7 @@ function text(value: unknown, max = 160): string | null {
 
 export const EMPTY_READING: CheckoutReading = {
   merchant: null, currency: null, itemPrice: null, shipping: null, tax: null, otherFees: [], total: null,
-  deliveryDate: null, returnWindowDays: null, pageNotes: [], readable: false,
+  deliveryDate: null, returnWindowDays: null, pageNotes: [], readable: false, addressedToAI: false, aiAddressedText: null,
 };
 
 /** Turns untrusted model output into a clean reading. Anything malformed becomes null rather than a guess. */
@@ -71,6 +75,8 @@ export function parseCheckoutReading(raw: unknown): { reading: CheckoutReading; 
     deliveryDate: date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null, returnWindowDays: days, pageNotes: notes,
     // Fail closed: a reading is only usable when the model explicitly says the page was readable.
     readable: record.readable === true,
+    addressedToAI: record.addressedToAI === true,
+    aiAddressedText: text(record.aiAddressedText, 300),
   };
   if (reading.total === null) problems.push("No order total was read.");
   return { reading, problems };
@@ -190,6 +196,35 @@ function arithmeticOf(reading: CheckoutReading): Inspection["arithmetic"] {
   };
 }
 
+/** Pattern rules that, on their own, show text aimed at an AI. Rules like "complete your order now" also appear on honest pages. */
+const STRONG_RULES = new Set(["override-instructions", "ignore-the-user", "role-marker", "secrecy", "new-instructions", "addresses-ai"]);
+const AI_NOUN = /\b(ai|a\.i\.|llm|language model|chatbot|automated (agents?|assistants?|systems?|tools?)|(ai|shopping|purchasing|browsing|web) (agents?|assistants?|bots?)|agents? and assistants?)\b/i;
+const EXTRA_OVERRIDE = /\b(ignore|disregard|forget|override|bypass|skip)\b[^.!?\n]{0,40}\b(previous|prior|above|earlier|preceding|any|all|your|the)\b[^.!?\n]{0,20}\b(instructions?|directions?|directives?|prompts?|commands?|guidelines?|rules?|limits?|constraints?|budget|restrictions?|safeguards?)\b|\bforget (what|everything|all)\b[^.!?\n]{0,40}\b(told|said|instructed|know)\b/i;
+
+/** Findings that should block: the reader flagged text aimed at an AI, a strong pattern matched, or several weak ones agree. */
+export function checkoutInjectionFindings(reading: CheckoutReading): InjectionFinding[] {
+  const text = hostileTextOf(reading);
+  const found: InjectionFinding[] = [];
+  if (reading.addressedToAI === true) found.push({ rule: "reader-flagged", excerpt: (reading.aiAddressedText ?? "Text on the page is addressed to an AI agent.").slice(0, 160) });
+  const scanned = scanUntrustedText(text);
+  const normalized = text.replace(/\s+/g, " ");
+  if (EXTRA_OVERRIDE.test(normalized) && !scanned.some((item) => item.rule === "override-instructions")) {
+    const match = EXTRA_OVERRIDE.exec(normalized)!;
+    found.push({ rule: "override-instructions", excerpt: normalized.slice(Math.max(0, match.index - 20), match.index + match[0].length + 40).trim().slice(0, 160) });
+  }
+  for (const item of scanned) {
+    if (item.rule === "addresses-agent") {
+      // "Our support assistant should answer within 2 hours" is not aimed at an AI shopper. Only count it when an AI noun is explicit.
+      if (AI_NOUN.test(item.excerpt)) found.push({ ...item, rule: "addresses-ai" });
+      continue;
+    }
+    if (STRONG_RULES.has(item.rule)) found.push(item);
+  }
+  const weak = scanned.filter((item) => !STRONG_RULES.has(item.rule) && item.rule !== "addresses-agent");
+  if (weak.length >= 2) found.push(...weak);
+  return found;
+}
+
 function hostileTextOf(reading: CheckoutReading): string {
   return [...reading.pageNotes, reading.merchant ?? "", ...reading.otherFees.map((fee) => fee.label)].join(" \n ");
 }
@@ -215,9 +250,10 @@ export function inspectCheckout(reading: CheckoutReading, rules: readonly Inspec
   const incomplete = [arithmeticA, arithmeticB].some((item) => item !== null && item.incomplete);
   const arithmeticOk = !hiddenFee && !incomplete;
 
-  // Text aimed at an AI is scanned in BOTH readings, so a reader that skipped it can't hide it.
-  const findingsA = scanUntrustedText(hostileTextOf(reading));
-  const findingsB = second ? scanUntrustedText(hostileTextOf(second)) : [];
+  // Text aimed at an AI is checked in BOTH readings, so a reader that skipped it can't hide it.
+  // Two tripwires: the reader's own semantic judgement, and a pattern scan that ignores ordinary shop banners.
+  const findingsA = checkoutInjectionFindings(reading);
+  const findingsB = second ? checkoutInjectionFindings(second) : [];
   const seen = new Set<string>();
   const injection = [...findingsA, ...findingsB].filter((finding) => { const key = `${finding.rule}|${finding.excerpt}`; if (seen.has(key)) return false; seen.add(key); return true; });
   const injectionReaders = [findingsA.length > 0 ? 1 : 0, findingsB.length > 0 ? 2 : 0].filter((n) => n > 0);

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuditEvents, getTransactionById, isUuid, verifyAuditChain } from "../../../../../../../lib/db";
+import { getLatestCheckoutInspection } from "../../../../../../../lib/checkout-inspections";
 import { requireTransactionAccess } from "../../../../../lib/ownership";
 
 export const runtime = "nodejs";
@@ -40,7 +41,8 @@ export async function GET(_request: Request, context: { params: Promise<{ transa
     if (!tx) return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
     const audit = await getAuditEvents(transactionId);
     const auditChain = await verifyAuditChain(transactionId);
-    return NextResponse.json({ transaction: publicTransaction(tx), audit, auditChain, capturePerformedByPactPay: tx.capture_origin === "PACTPAY_GATE" });
+    const checkoutInspection = await getLatestCheckoutInspection(transactionId).catch(() => null);
+    return NextResponse.json({ transaction: publicTransaction(tx), checkoutInspection, audit, auditChain, capturePerformedByPactPay: tx.capture_origin === "PACTPAY_GATE" });
   } catch (error) {
     console.error("PactPay transaction lookup failed", error);
     return NextResponse.json({ error: "Unable to load transaction status" }, { status: 500 });

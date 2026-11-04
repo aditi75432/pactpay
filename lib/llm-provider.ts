@@ -32,9 +32,18 @@ export interface Provider {
   tokenParam: "max_completion_tokens" | "max_tokens";
   /** Whether the provider documents `reasoning_effort`. */
   reasoningEffort: boolean;
+  /** Whether `response_format: json_schema` is supported. Muse Spark Open on Baseten has no structured-output or JSON mode. */
+  structuredOutput: boolean;
 }
 
 const clean = (value: string | undefined): string => (value ?? "").trim();
+
+const BASETEN_DEFAULT_MODEL = "meta-models/muse-spark-open";
+/** An earlier example file used a `-1026` suffix that Baseten answers with 404, so that value is treated as the default. */
+function basetenModel(): string {
+  const configured = clean(process.env.BASETEN_MODEL);
+  return !configured || configured === "meta-models/muse-spark-open-1026" ? BASETEN_DEFAULT_MODEL : configured;
+}
 
 function build(id: ProviderId): Provider | null {
   if (id === "meta") {
@@ -44,7 +53,7 @@ function build(id: ProviderId): Provider | null {
       id, label: "Meta Model API", apiKey, keyEnv: "MODEL_API_KEY",
       baseUrl: (clean(process.env.META_API_BASE_URL) || "https://api.meta.ai/v1").replace(/\/$/, ""),
       model: clean(process.env.META_MODEL) || "muse-spark-1.3",
-      openWeights: false, tokenParam: "max_completion_tokens", reasoningEffort: true,
+      openWeights: false, tokenParam: "max_completion_tokens", reasoningEffort: true, structuredOutput: true,
     };
   }
   const apiKey = clean(process.env.BASETEN_API_KEY);
@@ -52,8 +61,8 @@ function build(id: ProviderId): Provider | null {
   return {
     id, label: "Muse Spark Open (Baseten)", apiKey, keyEnv: "BASETEN_API_KEY",
     baseUrl: (clean(process.env.BASETEN_BASE_URL) || "https://inference.baseten.co/v1").replace(/\/$/, ""),
-    model: clean(process.env.BASETEN_MODEL) || "meta-models/muse-spark-open-1026",
-    openWeights: true, tokenParam: "max_tokens", reasoningEffort: false,
+    model: basetenModel(),
+    openWeights: true, tokenParam: "max_tokens", reasoningEffort: false, structuredOutput: false,
   };
 }
 
@@ -147,7 +156,7 @@ async function once(provider: Provider, request: ModelRequest): Promise<ModelRep
     [provider.tokenParam]: request.maxTokens,
   };
   if (request.effort && provider.reasoningEffort) body.reasoning_effort = request.effort;
-  if (request.responseFormat) body.response_format = request.responseFormat;
+  if (request.responseFormat && provider.structuredOutput) body.response_format = request.responseFormat;
   if (request.tools && request.tools.length > 0) {
     body.tools = request.tools.map((tool) => ({ type: "function", function: tool }));
     body.tool_choice = "auto";
@@ -161,7 +170,11 @@ async function once(provider: Provider, request: ModelRequest): Promise<ModelRep
       cache: "no-store",
       signal: AbortSignal.timeout(request.timeoutMs),
     });
-    if (!response.ok) return { ok: false, status: response.status, content: "", message: null, usage: null, refusal: null, error: await providerError(response) };
+    if (!response.ok) {
+      const detail = await providerError(response);
+      const hint = response.status === 404 && provider.id === "baseten" ? ` (model "${provider.model}" was not found: set BASETEN_MODEL to a slug from GET ${provider.baseUrl}/models)` : "";
+      return { ok: false, status: response.status, content: "", message: null, usage: null, refusal: null, error: detail + hint };
+    }
     const payload = await response.json() as {
       choices?: Array<{ message?: { content?: unknown; refusal?: unknown; tool_calls?: AssistantMessage["tool_calls"] } }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };

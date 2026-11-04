@@ -35,13 +35,18 @@ We would rather you hear these from us. Each item says what is true today.
 ## Meta layer limits
 
 - The Checkout Inspector can't catch a model that misreads a page the same way twice. Two readings, cross-model agreement and arithmetic make that unlikely, not impossible.
-- The Inspector reads screenshots you give it. It is not attached to a live retailer checkout.
-- The Inspector's verdict affects settlement only when an inspection is attached to that order (open it from the order page). With none attached, the other gate checks decide, unchanged. The latest inspection for an order wins; if the lookup fails, the gate fails closed.
+- The checkout page the Inspector reads is drawn from the order's sandbox merchant terms, not captured from a real retailer. A real deployment would capture the merchant's own page (browser extension or merchant API). The hostile page is a labelled simulation.
+- The inspection verdict affects settlement only when one is attached to the order. The Shop workflow always attaches one; other callers, such as the agent gateway used on its own, are decided by the other checks, unchanged. The latest inspection for an order wins; if the lookup fails, the gate fails closed.
 - A missing field, unreadable page, missing shipping/tax or total, or two readings that disagree all end in *Can't verify*. Missing data is never treated as agreement.
-- Checkout pages are only as honest as the screenshot: a doctored screenshot proves nothing. A production version would capture the page itself.
+- An inspection is only as honest as the page it reads. Because the sandbox page is drawn from the same terms the gate uses, a Safe to pay verdict there mostly proves the reading path works; the value shows on pages that differ (the hostile simulation, or a real page).
+- Muse Spark Open on Baseten has no JSON mode, so JSON is requested in the prompt and validated by the same strict parser; a malformed answer ends in Can't verify.
+- The page settles by itself after you approve the hold on PayPal, within your autonomy setting. If your setting says you must release it, the page asks you.
 - Inspections add two model calls per run (cost and latency). Runs with one provider configured use one model for both readings, which is weaker; the UI labels this.
 - Voice input needs the Meta Model API key and a browser that allows the microphone. Recordings are capped at about 25 seconds.
 - The Muse Agent run issues a fresh agent key for your approval, which replaces any earlier key for it.
 - Live Meta API behavior was verified against a local mock that checks the documented request shape; run it with your own key before recording.
 - Interactive timeouts: Muse Spark reasons before answering. Short structured calls use `reasoning_effort: "minimal"` and the timeout is clamped to 3-60 s (default generous); set `AI_TIMEOUT_MS` to a number or leave it unset.
 - Demo video footage of PayPal approval is Sandbox only and should be labelled as such.
+- The text-aimed-at-an-AI check is a tripwire: a vision flag from each reader plus a pattern scan. Paraphrased attacks can evade patterns and a reader can miss them. The budget rules, arithmetic checks and settlement gate are what protect the money.
+- Muse Spark Open on Baseten: tool-calling is unverified here, so the full open-weights run (`AI_PROVIDER=baseten`) may fall back to the rule-based agent.
+- Voice transcripts are normalised for spoken numbers ("one hundred dollars" becomes $100); unusual phrasings may still need a manual edit before approving.

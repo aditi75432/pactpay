@@ -10,7 +10,7 @@
  *                    if your autonomy setting doesn't allow that)
  *   --auto-approve   don't pause for you to approve the PayPal hold (for scripted runs)
  *   --open-weights   use Muse Spark Open on Baseten (needs BASETEN_API_KEY) instead of the Meta Model API
- * Env: META_MODEL (default muse-spark-1.3), BASETEN_MODEL (default meta-models/muse-spark-open-1026).
+ * Env: META_MODEL (default muse-spark-1.3), BASETEN_MODEL (default meta-models/muse-spark-open).
  */
 import readline from "node:readline/promises";
 
@@ -20,7 +20,7 @@ const BASE = (process.env.PACTPAY_URL || "http://localhost:3000").replace(/\/$/,
 const KEY = process.env.PACTPAY_AGENT_KEY || "";
 const LLM_URL = (OPEN ? process.env.BASETEN_BASE_URL || "https://inference.baseten.co/v1" : process.env.META_API_BASE_URL || "https://api.meta.ai/v1").replace(/\/$/, "");
 const LLM_KEY = OPEN ? process.env.BASETEN_API_KEY || "" : process.env.MODEL_API_KEY || process.env.META_API_KEY || "";
-const MODEL = OPEN ? process.env.BASETEN_MODEL || "meta-models/muse-spark-open-1026" : process.env.META_MODEL || "muse-spark-1.3";
+const MODEL = OPEN ? process.env.BASETEN_MODEL || "meta-models/muse-spark-open" : process.env.META_MODEL || "muse-spark-1.3";
 const TEMPT = args.includes("--tempt");
 const AUTO = args.includes("--auto-approve");
 const TASK = args.filter((a) => !a.startsWith("--")).join(" ").trim() || "Buy me a wireless mouse under $50";

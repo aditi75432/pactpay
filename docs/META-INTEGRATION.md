@@ -7,7 +7,7 @@ Every AI call goes through one file: [`lib/llm-provider.ts`](../lib/llm-provider
 | Provider | Model (default) | Endpoint | Key |
 |---|---|---|---|
 | Meta Model API | `muse-spark-1.3` | `https://api.meta.ai/v1/chat/completions` | `MODEL_API_KEY` |
-| Muse Spark Open via Baseten | `meta-models/muse-spark-open-1026` | `https://inference.baseten.co/v1/chat/completions` | `BASETEN_API_KEY` |
+| Muse Spark Open via Baseten | `meta-models/muse-spark-open` | `https://inference.baseten.co/v1/chat/completions` | `BASETEN_API_KEY` |
 | Muse Voice Transcribe | `muse-voice-transcribe-1.0` | `https://api.meta.ai/v1/asr/transcribe` | `MODEL_API_KEY` |
 
 `AI_PROVIDER=meta|baseten` forces one. With neither key the app says so and uses a local rule parser. The header chip (`/api/ai/status`) always shows which models are live.
@@ -18,8 +18,8 @@ Every AI call goes through one file: [`lib/llm-provider.ts`](../lib/llm-provider
 |---|---|---|
 | Rules from words | `POST /api/intent/compile` | `response_format: json_schema` (strict). On HTTP 400, retries with the schema in the prompt. Output is validated by `normalizeIntentCompilation`. |
 | Voice input | `POST /api/voice/transcribe` | Browser records mono 16-bit WAV at 24 kHz (`pact-core/src/wav.ts`); server posts multipart `request` + `audio`. |
-| Muse Agent | `POST /api/muse-agent` (NDJSON stream) | Tool calling with `tool_choice: "auto"`; loop in `pact-core/src/agent-loop.ts`. |
-| Checkout Inspector | `POST /api/inspector/checkout` | Two parallel vision calls with `image_url` data URLs. Two different Meta models when both keys exist. |
+| Muse Agent (`/agent` step) | `POST /api/muse-agent` (NDJSON stream) | Tool calling with `tool_choice: "auto"`; loop in `pact-core/src/agent-loop.ts`. |
+| Checkout inspection (order page, automatic) | `GET /api/shop/checkout-page` then `POST /api/inspector/checkout` | Two parallel vision calls with `image_url` data URLs. Two different Meta models when both keys exist. |
 | Seller-text reader | `POST /api/evidence/extract` | Claims kept only if the quote appears verbatim in the source. |
 | Inspector → settlement | `POST /api/inspector/checkout` with `transactionId` | Verdict saved per order; read by the settlement route as a gate fact. |
 | Outcome explanation | `POST /api/explain` | Discarded if it introduces any number not in the input. |
@@ -50,4 +50,8 @@ Every AI call goes through one file: [`lib/llm-provider.ts`](../lib/llm-provider
 
 ## What has and hasn't been verified
 
-The request shapes were checked against a local mock that enforces the documented protocol. Run the Inspector suite, one Muse Agent run and one voice input against a real key before recording.
+The request shapes were checked against a local mock that enforces the documented protocol. Run one full Shop workflow (both the honest and the hostile checkout), the tempt run, and one voice input against a real key before recording.
+
+## Muse Spark Open on Baseten
+
+Model `meta-models/muse-spark-open` at `https://inference.baseten.co/v1`. It uses `max_tokens`, accepts `image_url`, and has **no structured-output or JSON mode**, so the gateway never sends `response_format` to it: JSON is requested in the prompt and parsed by the same strict validators. An older example value ending in `-1026` is treated as this default. A 404 means the model slug is wrong: list valid slugs with `GET https://inference.baseten.co/v1/models`.

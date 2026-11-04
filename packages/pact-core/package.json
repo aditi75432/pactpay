@@ -30,6 +30,8 @@
     "./ai-labels": "./src/ai-labels.ts",
     "./checkout-inspection": "./src/checkout-inspection.ts",
     "./inspection-samples": "./src/inspection-samples.ts",
+    "./checkout-page": "./src/checkout-page.ts",
+    "./spoken-numbers": "./src/spoken-numbers.ts",
     "./agent-loop": "./src/agent-loop.ts",
     "./wav": "./src/wav.ts"
   }

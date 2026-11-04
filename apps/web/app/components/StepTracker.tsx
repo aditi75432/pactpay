@@ -3,10 +3,11 @@ const STEPS = ["Describe", "Approve rules", "Pick an offer", "Hold payment", "Re
 export type StepIndex = 0 | 1 | 2 | 3 | 4;
 
 /** `current` is the active step. `failedAt` marks a step as blocked (used for a blocked result). */
-export default function StepTracker({ current, failedAt }: { current: StepIndex; failedAt?: StepIndex }) {
+export default function StepTracker({ current, failedAt, labels }: { current: number; failedAt?: number; labels?: readonly string[] }) {
+  const STEP_LABELS = labels ?? STEPS;
   return (
     <ol className="pp-steps" aria-label="Progress" style={{ listStyle: "none", padding: 0 }}>
-      {STEPS.map((label, index) => {
+      {STEP_LABELS.map((label, index) => {
         const state = failedAt === index ? "bad" : index < current ? "done" : index === current ? "active" : "todo";
         return (
           <li key={label} style={{ display: "contents" }}>
@@ -14,7 +15,7 @@ export default function StepTracker({ current, failedAt }: { current: StepIndex;
               <span className="pp-step-dot">{state === "done" ? "✓" : state === "bad" ? "!" : index + 1}</span>
               {label}
             </span>
-            {index < STEPS.length - 1 && <span className="pp-step-sep" aria-hidden="true" />}
+            {index < STEP_LABELS.length - 1 && <span className="pp-step-sep" aria-hidden="true" />}
           </li>
         );
       })}

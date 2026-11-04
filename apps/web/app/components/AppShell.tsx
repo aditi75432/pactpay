@@ -16,8 +16,6 @@ function Brand() {
 
 const NAV = [
   { href: "/", label: "Shop" },
-  { href: "/muse-agent", label: "Muse Agent" },
-  { href: "/inspector", label: "Checkout check" },
   { href: "/platforms", label: "For AI platforms" },
   { href: "/control-center", label: "Activity" },
 ];

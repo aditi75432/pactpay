@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
  */
 const SHOP_TOOLS: AgentToolSpec[] = [
   { name: "get_rules", description: "Read the shopping rules the user approved and how much you may do alone. You cannot change them.", parameters: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "shortlist", description: "Search live stores and rank offers against the approved rules. Only PASS offers can be held.", parameters: { type: "object", properties: { query: { type: "string", description: "What to search for, short and product-focused." } }, required: ["query"], additionalProperties: false } },
+  { name: "shortlist", description: "Search live stores and rank offers against the approved rules. Only PASS offers can be held.", parameters: { type: "object", properties: { query: { type: "string", description: "What to search for: the product only, 1 to 4 words. Never put prices, numbers or rules in the query; the rules are applied for you." } }, required: ["query"], additionalProperties: false } },
   { name: "hold_payment", description: "Ask for a PayPal hold on a PASS offer. A person must approve the hold on PayPal. Nothing is charged.", parameters: { type: "object", properties: { snapshotId: { type: "string", description: "The snapshotId of a PASS offer from shortlist." } }, required: ["snapshotId"], additionalProperties: false } },
 ];
 const SETTLE_TOOLS: AgentToolSpec[] = [
@@ -65,7 +65,11 @@ export async function POST(request: Request) {
   const transactionId = typeof body.transactionId === "string" ? body.transactionId : "";
   if (phase === "settle" && !isUuidLike(transactionId)) return Response.json({ error: "Send the transactionId of the hold you approved." }, { status: 400 });
   const rawTask = typeof body.task === "string" ? body.task.trim().slice(0, 600) : "";
-  const task = phase === "settle" ? `I approved the PayPal hold for transaction ${transactionId}. Please request settlement now.` : rawTask || "Buy the best option that fits my rules.";
+  const searchQuery = typeof body.searchQuery === "string" ? body.searchQuery.trim().slice(0, 120) : "";
+  const baseTask = rawTask || "Buy the best option that fits my rules.";
+  const task = phase === "settle"
+    ? `I approved the PayPal hold for transaction ${transactionId}. Please request settlement now.`
+    : searchQuery ? `${baseTask}\nStart by searching the catalog for "${searchQuery}". Keep any later search to the product name only.` : baseTask;
 
   let key: string;
   try { key = (await issueAgentKey(sessionId, approval.id)).key; }
@@ -85,7 +89,12 @@ export async function POST(request: Request) {
 
   async function execute(name: string, args: Record<string, unknown>): Promise<ToolOutcome> {
     if (name === "get_rules") return gateway("GET", "/api/agent/v1/rules");
-    if (name === "shortlist") return gateway("POST", "/api/agent/v1/shortlist", { query: String(args.query ?? "") });
+    if (name === "shortlist") {
+      // Prices and rules in a catalog query return irrelevant products. The rules are applied after the search, so keep the query to the product.
+      const asked = String(args.query ?? "").trim();
+      const noisy = !asked || /[\d$€£]/.test(asked) || /\b(under|below|less than|at most|budget|cheap|cheapest|price|dollars?|in stock)\b/i.test(asked) || asked.split(/\s+/).length > 5;
+      return gateway("POST", "/api/agent/v1/shortlist", { query: searchQuery && noisy ? searchQuery : asked });
+    }
     if (name === "hold_payment") {
       const held = await gateway("POST", "/api/agent/v1/hold", { snapshotId: String(args.snapshotId ?? "") });
       return typeof held.json.approvalUrl === "string" ? { ...held, stop: true } : held;

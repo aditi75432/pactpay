@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { normalizeSpokenNumbers } from "@pactpay/pact-core/spoken-numbers";
 import { normalizeIntentCompilation, ruleBasedIntentCompilation } from "../../../../../../lib/intent-pact";
 import { enforceRateLimit } from "../../../../lib/request-guard";
 import { requireLogin } from "../../../../lib/session";
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
   catch { return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 }); }
 
   const intent = body && typeof body === "object" && "intent" in body && typeof (body as { intent?: unknown }).intent === "string"
-    ? (body as { intent: string }).intent.trim()
+    ? normalizeSpokenNumbers((body as { intent: string }).intent.trim())
     : "";
   if (!intent || intent.length < 8 || intent.length > 1200) {
     return NextResponse.json({ error: "Describe the purchase in 8–1,200 characters." }, { status: 400 });
@@ -90,7 +91,10 @@ export async function POST(request: Request) {
 
   // First choice: strict constrained output. If the provider rejects the schema (HTTP 400), ask again with the schema
   // written into the prompt. Either way the result crosses the same strict PactPay normalizer before it is shown.
-  let reply = await callModel(provider, { messages, temperature: 0.1, maxTokens: 2500, effort: "minimal", timeoutMs, responseFormat: { type: "json_schema", json_schema: { name: "pactpay_purchase_pact", strict: true, schema: MODEL_SCHEMA } } });
+  const promptSchemaFirst = !provider.structuredOutput;
+  let reply: Awaited<ReturnType<typeof callModel>> = promptSchemaFirst
+    ? { ok: false, status: 400, content: "", message: null, usage: null, refusal: null, error: "structured output not supported by this provider" }
+    : await callModel(provider, { messages, temperature: 0.1, maxTokens: 2500, effort: "minimal", timeoutMs, responseFormat: { type: "json_schema", json_schema: { name: "pactpay_purchase_pact", strict: true, schema: MODEL_SCHEMA } } });
   let outputMode: "strict_schema" | "prompt_json" = "strict_schema";
   if (reply.status === 400) {
     console.error("Strict JSON-schema request was rejected:", reply.error);
