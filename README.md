@@ -5,8 +5,8 @@
 Meta's Muse models do the seeing, hearing, reading and deciding-what-to-try. A small piece of fixed code, not a model, decides whether any money moves. That split is the whole product.
 
 <!-- HACKATHON:START (the only block to edit when you resubmit elsewhere; see docs/hackathons/PAYPAL-SWAP.md) -->
-> **Live app:** [ADD HOSTED URL] · **3-minute demo:** [ADD VIDEO LINK] · **Test login:** `judge` / `PactPay-Judge-2026` (PayPal Sandbox test money only)
-> **Built for:** Meta Global AI Developer Hackathon · Indie Developer track · Theme: Build for Your World
+> **Live app:** https://pactpay-brs1.onrender.com/ || **3-minute demo:** https://youtu.be/-DBGpdTeTg4 || **Test login:** `judge` / `PactPay-Judge-2026` (PayPal Sandbox test money only) ||
+> **Built for:** Meta Global AI Developer Hackathon || Indie Developer track || Theme: Build for Your World
 <!-- HACKATHON:END -->
 
 ![One workflow](docs/diagrams/00-one-workflow.png)
@@ -180,7 +180,7 @@ Also in the app:
 
 ## Run it all on open weights
 
-For the open-weights path, set `AI_PROVIDER=baseten` and `BASETEN_API_KEY` (model `meta-models/muse-spark-open`). Rules, the agent and the inspector then all run on Muse Spark Open via Baseten. Muse Spark Open has no JSON mode, so JSON is requested in the prompt and validated; tool-calling on Baseten is unverified here, and the agent falls back to the rule-based path if it fails. See [`docs/BASETEN.md`](docs/BASETEN.md).
+For the open-weights path, set `AI_PROVIDER=baseten` and `BASETEN_API_KEY` (model `meta-models/muse-spark-open`). Rules, the agent and the inspector then all run on Muse Spark Open via Baseten. Muse Spark Open has no JSON mode, so JSON is requested in the prompt and validated; tool-calling on Baseten is unverified here, and the agent falls back to the rule-based path if it fails.
 
 ## Try it
 
@@ -213,7 +213,7 @@ pnpm --filter web build
 
 ## Limitations and constraints
 
-Full list: [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md). The ones that matter most:
+The ones that matter most:
 
 - **Sandbox only.** PayPal Sandbox test money; no retailer order is ever placed. Shipping and tax are fixed test values, and the seller changing the deal is a labelled simulation.
 - **The checkout page is drawn from sandbox merchant terms.** There is no real retailer checkout to screenshot, so PactPay renders the page a payment would be made on from the order's stored terms and sends it to Muse like any screenshot. A browser extension or merchant API would capture the real page; the Inspector path doesn't change.
@@ -221,7 +221,6 @@ Full list: [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md). The ones that matter mo
 - **A verdict affects settlement only when one is attached to the order.** The Shop workflow always attaches one; other callers (for example the agent gateway on its own) are decided by the other checks, as before.
 - **It can't catch a model that misreads in the same way twice.** Two readings, cross-model agreement and arithmetic make that unlikely, not impossible. It is a guard, not a guarantee.
 - **A person still approves each hold on PayPal.**
-- **Live Meta behavior** was tested against a local mock that checks the documented request shape. Run it with your own key before relying on it.
 - Basic accounts, USD only, one catalog provider, English only, AI output that can be wrong (you review the rules).
 
 ## Repository layout
@@ -248,7 +247,7 @@ PactPay's policy engine, settlement gate, PayPal Sandbox flow, agent keys, evide
 
 ## Docs
 
-[Judge guide](docs/JUDGES.md) · [Architecture](docs/ARCHITECTURE.md) · [Meta integration](docs/META-INTEGRATION.md) · [Submission answers](docs/SUBMISSION.md) · [Baseten answers](docs/BASETEN.md) · [Demo kit](demo-kit/README.md) · [Limitations](docs/LIMITATIONS.md) · [Threat model](docs/THREAT_MODEL.md) · [Agent integration](docs/AGENT-INTEGRATION.md) · [Reuse for another hackathon](docs/hackathons/PAYPAL-SWAP.md)
+[Judge guide](docs/JUDGES.md) · [Architecture](docs/ARCHITECTURE.md) · [Meta integration](docs/META-INTEGRATION.md) [Threat model](docs/THREAT_MODEL.md) · [Agent integration](docs/AGENT-INTEGRATION.md) 
 
 ## License
 
