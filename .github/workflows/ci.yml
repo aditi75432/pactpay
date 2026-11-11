@@ -19,3 +19,8 @@ jobs:
       - run: pnpm --filter @pactpay/pact-core test
       - run: pnpm --filter web typecheck
       - run: pnpm --filter web build
+      - name: Extension tests
+        working-directory: extension
+        run: |
+          npm install --no-audit --no-fund
+          npm test

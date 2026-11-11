@@ -39,7 +39,13 @@ services:
       - key: PACTPAY_DEMO_PASSWORD
         sync: false   # enter PactPay-Judge-2026 (the pair listed in the README) or your own
       - key: PACTPAY_SHOW_DEMO_CREDENTIALS
-        value: "0"
+        value: "1"   # shows the judge login on /login and /judges. The account only holds Sandbox test data.
+      # Optional: PayPal Sandbox BUYER test login, shown on the /judges page. These are baked in at build time, so set them
+      # before the build (a fake sandbox account only, never a real PayPal login).
+      - key: NEXT_PUBLIC_SANDBOX_BUYER_EMAIL
+        sync: false
+      - key: NEXT_PUBLIC_SANDBOX_BUYER_PASSWORD
+        sync: false
       # NEXT_PUBLIC_APP_URL is optional on Render: the app falls back to RENDER_EXTERNAL_URL.
 databases:
   - name: pactpay-db

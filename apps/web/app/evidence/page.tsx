@@ -203,7 +203,7 @@ export default function EvidenceDeskPage() {
     <main style={{ minHeight: "100vh", background: palette.bg, color: palette.text, padding: "28px 20px 64px", fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" }}>
       <div style={{ maxWidth: 1120, margin: "0 auto" }}>
         <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 34 }}>
-          <a href="/" style={{ color: palette.text, textDecoration: "none", fontWeight: 900, letterSpacing: 2 }}>PACTPAY <span style={{ color: palette.green }}>///</span></a>
+          <a href="/" aria-label="PactPay home" style={{ display: "inline-flex" }}>{/* eslint-disable-next-line @next/next/no-img-element */}<img src="/brand/pactpay-logo-light.svg" alt="PactPay" height={32} style={{ height: 32, width: "auto" }} /></a>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}><a href="/discover" style={{ color: palette.green }}>← Discovery</a><a href="/pact-lab" style={{ color: palette.muted }}>Policy Lab ↗</a></div>
         </header>
 

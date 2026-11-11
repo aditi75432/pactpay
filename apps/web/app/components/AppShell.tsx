@@ -6,18 +6,18 @@ import { useEffect, useState, type ReactNode } from "react";
 function Brand() {
   return (
     <a href="/" className="pp-brand" aria-label="PactPay home">
-      <span className="pp-brand-mark" aria-hidden="true">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
-      </span>
-      PactPay
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src="/brand/pactpay-logo.svg" alt="PactPay" height={34} style={{ height: 34, width: "auto", display: "block" }} />
     </a>
   );
 }
 
 const NAV = [
   { href: "/", label: "Shop" },
+  { href: "/extension", label: "Guard extension" },
   { href: "/platforms", label: "For AI platforms" },
   { href: "/control-center", label: "Activity" },
+  { href: "/judges", label: "Judge guide" },
 ];
 
 type Me = { authenticated: boolean; username: string | null; loginRequired: boolean };
@@ -36,11 +36,11 @@ function MuseChip() {
   const names = status.providers.map((p) => p.modelLabel).join(" + ");
   return (
     <span className="pp-muse-chip" data-off={!status.configured} title={status.configured ? `AI calls in this app run on: ${names}` : "No Meta model is configured: the app uses its basic local parser."}>
-      <i aria-hidden="true" />{status.configured ? `Meta ${label}` : "Meta Muse not set up"}
+      <i aria-hidden="true" />{status.configured ? `AI · ${label}` : "AI model not set up"}
     </span>
   );
 }
-const PUBLIC_PATHS = ["/login", "/platforms"];
+const PUBLIC_PATHS = ["/login", "/platforms", "/judges", "/extension"];
 
 export default function AppShell({ children, narrow = false }: { children: ReactNode; narrow?: boolean }) {
   const path = usePathname() ?? "/";
@@ -92,6 +92,19 @@ export default function AppShell({ children, narrow = false }: { children: React
         </div>
       </header>
       <main className={`pp-main${narrow ? " pp-narrow" : ""}`} style={narrow ? { maxWidth: 820 } : undefined}>{children}</main>
+      <footer className="pp-footer">
+        <div className="pp-footer-in">
+          <div className="pp-footer-brand">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/pactpay-logo.svg" alt="PactPay" height={28} style={{ height: 28, width: "auto" }} />
+            <p>Let your AI agent shop. PayPal holds the money until it&apos;s right.</p>
+          </div>
+          <nav aria-label="Footer" className="pp-footer-nav">
+            <a href="/">Shop</a><a href="/extension">Guard extension</a><a href="/control-center">Activity</a><a href="/platforms">For AI platforms</a><a href="/judges">Judge guide</a><a href="/store" target="_blank" rel="noopener">Demo store</a>
+          </nav>
+          <p className="pp-footer-note">Built for the PayPal AI Hackathon. PayPal Sandbox only: no real money moves and no retailer order is ever placed.</p>
+        </div>
+      </footer>
     </div>
   );
 }

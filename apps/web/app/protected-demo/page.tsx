@@ -330,7 +330,7 @@ export default function ProtectedDemoPage() {
     <main style={{ minHeight: "100vh", background: `radial-gradient(ellipse at 12% 0%, #153a2e 0%, ${colors.bg} 46%)`, color: colors.text, padding: "28px 18px 64px", fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" }}>
       <div style={{ maxWidth: 1160, margin: "0 auto" }}>
         <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 14, marginBottom: 34 }}>
-          <a href="/" style={{ textDecoration: "none", color: colors.text, fontWeight: 950, letterSpacing: 1.8 }}>PACTPAY <span style={{ color: colors.green }}>///</span></a>
+          <a href="/" aria-label="PactPay home" style={{ display: "inline-flex" }}>{/* eslint-disable-next-line @next/next/no-img-element */}<img src="/brand/pactpay-logo-light.svg" alt="PactPay" height={32} style={{ height: 32, width: "auto" }} /></a>
           <nav style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 13 }}><a href="/discover" style={{ color: colors.muted }}>Discovery ↗</a><a href="/pact-lab" style={{ color: colors.muted }}>Policy Lab ↗</a><a href="/evidence" style={{ color: colors.muted }}>Evidence Desk ↗</a></nav>
         </header>
 

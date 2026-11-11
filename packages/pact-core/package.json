@@ -33,6 +33,7 @@
     "./checkout-page": "./src/checkout-page.ts",
     "./spoken-numbers": "./src/spoken-numbers.ts",
     "./agent-loop": "./src/agent-loop.ts",
-    "./wav": "./src/wav.ts"
+    "./wav": "./src/wav.ts",
+    "./page-guard": "./src/page-guard.ts"
   }
 }

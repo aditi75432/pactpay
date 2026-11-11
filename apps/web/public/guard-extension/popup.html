@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>PactPay Guard</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+<header><img class="mark" src="icons/icon48.png" alt="" width="40" height="40"><div><h1>PactPay Guard</h1><p>Checks the real checkout before anyone pays.</p></div></header>
+
+<section id="rulesCard" class="card">
+  <div class="rtop"><span id="modeBadge" class="badge">Quick Guard</span><span id="linkBadge" class="badge linked" hidden>Linked to your account</span></div>
+  <h2 id="rulesTitle">Using a budget only</h2>
+  <ul id="rulesList" class="rules"></ul>
+  <p id="rulesHint" class="hint"></p>
+  <button id="setRules" class="primary">Set my rules</button>
+</section>
+
+<section class="card">
+  <button id="check" class="secondary wide">Check this page now</button>
+  <p id="pageState" class="hint"></p>
+</section>
+
+<section class="card">
+  <h3>Use it with your PactPay account <span class="opt">optional</span></h3>
+  <p class="hint">Link the extension so rules and checks show up in the web app's Activity. On the PactPay <b>Guard extension</b> page, press <b>Link my extension</b> and it links automatically, or enter the code here.</p>
+  <div class="row"><input id="code" placeholder="ABCD-2345" maxlength="9" autocomplete="off" spellcheck="false"><button id="linkBtn" class="secondary">Link</button></div>
+  <p id="linkMsg" class="hint"></p>
+</section>
+
+<section class="card toggles">
+  <label class="tg"><input type="checkbox" id="autoCheck"><span><b>Check checkouts automatically</b><small>Sends only the order summary and hidden text, and only on pages detected as a checkout.</small></span></label>
+  <label class="tg"><input type="checkbox" id="screenshots"><span><b>AI screenshot cross-check</b><small>Needs your rules. Sends one screenshot of the order summary. Never stored.</small></span></label>
+  <label class="tg"><input type="checkbox" id="blockPay"><span><b>Put a speed bump on pay buttons</b><small>When a checkout is unsafe or unverified, "Place order" asks first. Applies to AI agents too.</small></span></label>
+</section>
+
+<details class="card"><summary>Advanced</summary>
+  <label for="baseUrl">PactPay server</label><input id="baseUrl" type="url" placeholder="https://your-pactpay.onrender.com">
+  <label for="budget">Quick Guard budget <span class="opt">(used until you set rules)</span></label>
+  <div class="money"><span>$</span><input id="budget" type="number" min="1" step="1" value="40"></div>
+  <label for="key">Agent key from the web app <span class="opt">(optional)</span></label>
+  <input id="key" type="password" placeholder="ppk_…" autocomplete="off" spellcheck="false">
+  <div class="row"><button id="save" class="secondary">Save &amp; test connection</button><a id="open" href="#" target="_blank" rel="noopener">Open PactPay</a></div>
+  <p id="status" class="hint"></p>
+</details>
+<script src="config.js"></script>
+<script src="popup.js"></script>
+</body></html>

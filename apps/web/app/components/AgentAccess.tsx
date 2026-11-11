@@ -12,6 +12,22 @@ export default function AgentAccess({ approvalId: suppliedApprovalId }: { approv
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [guardReady, setGuardReady] = useState(false);
+  const [guardConnected, setGuardConnected] = useState(false);
+
+  // The PactPay Guard extension announces itself on this page, and confirms when it has stored a key we send it.
+  useEffect(() => {
+    function onMessage(event: MessageEvent) {
+      if (event.source !== window || event.origin !== window.location.origin) return;
+      const data = event.data as { source?: unknown; type?: unknown } | null;
+      if (!data || data.source !== "pactpay-guard-ext") return;
+      if (data.type === "READY") setGuardReady(true);
+      if (data.type === "CONNECTED") { setGuardReady(true); setGuardConnected(true); }
+    }
+    window.addEventListener("message", onMessage);
+    window.postMessage({ source: "pactpay-web", type: "PING" }, window.location.origin);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -113,7 +129,10 @@ console.log(shortlist.results); // title, imageUrl, price, merchant, verdict, re
             <div>
               <p className="pp-small" style={{ fontWeight: 700 }}>1. Your agent key <span className="pp-muted" style={{ fontWeight: 500 }}>(shown once{expiresAt ? ` · expires ${new Date(expiresAt).toLocaleString()}` : ""})</span></p>
               <pre className="pp-code">{key}</pre>
-              <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => void copy("key", key)}>{copied === "key" ? "Copied" : "Copy key"}</button>
+              <div className="pp-row" style={{ gap: 8 }}>
+                <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => void copy("key", key)}>{copied === "key" ? "Copied" : "Copy key"}</button>
+                {guardReady && <button type="button" className="pp-btn pp-btn-primary pp-btn-sm" onClick={() => window.postMessage({ source: "pactpay-web", type: "CONNECT", key }, window.location.origin)} disabled={guardConnected}>{guardConnected ? "Connected to PactPay Guard ✓" : "Connect PactPay Guard extension"}</button>}
+              </div>
             </div>
             <div>
               <p className="pp-small" style={{ fontWeight: 700 }}>2. Remote MCP endpoint</p>

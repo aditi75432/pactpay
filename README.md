@@ -1,17 +1,38 @@
-# PactPay × Meta Muse
+<p align="center"><img src="apps/web/public/brand/pactpay-logo.svg" alt="PactPay" height="64"></p>
 
-**An AI agent that shops for you, reads the real checkout page, and can't be talked into overspending.**
+# PactPay
 
-AI agents can shop. They shouldn't control your money.
+**Let your AI agent shop. PayPal holds the money until it's right.**
 
-Meta's Muse models do the seeing, hearing, reading and deciding-what-to-try. PactPay lets AI agents shop on your behalf, while ensuring every purchase stays within the limits you approve.
+AI agents can shop. They shouldn't control your money. PactPay is the layer between an agent and PayPal: you approve rules once, PayPal **authorizes** (holds) the payment, and fixed code **re-checks the live offer and the real checkout page** before anything is captured. If a price moved, a fee appeared or a page whispered instructions to the agent, the hold is voided and **$0 moves**.
 
-<!-- HACKATHON:START (the only block to edit when you resubmit elsewhere; see docs/hackathons/PAYPAL-SWAP.md) -->
-> **Live app:** https://pactpay-brs1.onrender.com/ || **3-minute demo:** https://www.youtube.com/watch?v=ymvczptDzVA || **Test login:** `judge` / `PactPay-Judge-2026` (PayPal Sandbox test money only) ||
-> **Built for:** Meta Global AI Developer Hackathon || Indie Developer track || Theme: Build for Your World
+<!-- HACKATHON:START (the only block to edit when you resubmit elsewhere; see document/hackathons/PAYPAL-SWAP.md) -->
+> **Live app:** https://YOUR-APP.onrender.com/ || **3-minute demo:** [YOUR_YOUTUBE_LINK] || **Built for:** PayPal AI Hackathon, "Build What's Next with PayPal and AI" (Devpost)
+>
+> **Judges, start here:** the in-app **Judge guide** at `/judges`, or [`docs/JUDGES.md`](docs/JUDGES.md) (same 4-minute path) · **Test login:** `judge` / `PactPay-Judge-2026` · **PayPal Sandbox buyer:** `[SANDBOX_BUYER_EMAIL]` / `[SANDBOX_BUYER_PASSWORD]` (test money only)
+>
+> **Prizes this fits:** Best Use of Agentic Commerce · Best Use of PayPal + AI · Most Impactful · sponsor tools used for real: **AG Grid** (Activity grids), **Channel3** (live catalog), **Render** (hosting)
 <!-- HACKATHON:END -->
 
 ![One workflow](docs/diagrams/00-one-workflow.png)
+
+---
+
+## What PayPal does here, and what's new
+
+PayPal is not a checkout button in this project. It is the **money layer and the safety mechanism**: the hold is what makes "the agent can't overspend" a fact instead of a promise.
+
+| PayPal API | How PactPay uses it |
+|---|---|
+| **Orders v2** `POST /v2/checkout/orders` (`intent: AUTHORIZE`) | Creates the hold the buyer approves on PayPal. Nothing is charged. |
+| **Orders v2** authorize / get order | Turns approval into an authorization; reads PayPal's own record back |
+| **Payments v2** `.../authorizations/{id}/capture` | Captures **only** after the settlement gate passes every check |
+| **Payments v2** `.../authorizations/{id}/void` | Releases the hold when anything slipped, so $0 moves |
+| **Payments v2** get capture / authorization | Reconciles amounts and status after the fact |
+| **Webhooks** + `verify-webhook-signature` | PayPal's signed events are checked against the gate's own audit chain |
+| **MCP + HTTP** (PactPay's own server) | Any agent can shop through the same gate, with a limited, expiring, revocable key |
+
+**New for this hackathon: PactPay Guard, a browser extension for any store.** It reads the *real* checkout page you are on, before you or the AI agent driving your browser clicks pay. See [PactPay Guard](#pactpay-guard-browser-extension) below, install it from `/extension`, and try it on the built-in demo store at `/store`.
 
 ---
 
@@ -93,7 +114,7 @@ Several efforts make agent payments safer. They mostly answer *who may pay* and 
 
 ## Tools used
 
-**Muse is the main tool.** Every AI feature runs on a Meta model, and nothing else is called.
+**PayPal is the money layer; Meta Muse is the AI.** Every AI feature runs on a Meta Muse model (any OpenAI-compatible provider could be swapped in), and PayPal Sandbox holds and moves every dollar.
 
 | Tool | Role | Where |
 |---|---|---|
@@ -103,11 +124,12 @@ Several efforts make agent payments safer. They mostly answer *who may pay* and 
 | PayPal Sandbox (Orders + Payments) | Authorize, capture, void, read-back. Test money only | `lib/paypal.ts` |
 | Channel3 | Real product catalog and offers; product-detail refresh at settlement | `lib/` catalog modules |
 | Next.js 16 + React 19 | Web app and API routes | `apps/web` |
-| TypeScript (pure core) + Vitest | Policy engine, gate, inspection, agent loop (184 tests, no network) | `packages/pact-core` |
+| TypeScript (pure core) + Vitest | Policy engine, gate, inspection, agent loop (244 tests, no network) | `packages/pact-core` |
 | PostgreSQL | Offer snapshots, claims, audit chain, inspections, accounts | `lib/db`, `docker-compose.yml` |
 | MCP + HTTP gateway | Bring-your-own agent | `scripts/mcp-server.mjs`, `/api/agent/v1/*` |
-| AG Grid | Activity and control center | `apps/web/app/control-center` |
+| AG Grid | Activity: transactions, policy runs and **Guard checks** grids with filters and quick-filter | `apps/web/app/control-center` |
 | Render | Hosting blueprint | `render.yaml` |
+| Chrome extension (MV3) | PactPay Guard: code reader, overlay, pay-button speed bump | `extension/` |
 
 How Muse is used beyond a basic integration:
 
@@ -172,6 +194,41 @@ Also in the app:
 
 ![Agent keys and marketplace](docs/diagrams/04-agent-key-marketplace.png)
 
+## PactPay Guard (browser extension)
+
+The web app proves the idea end to end on a PayPal Sandbox. **Guard** takes it to the open web: a Manifest V3 extension that checks the real checkout page of *any* store. It is **independent**: you do not need the web app, or even an account, to use it.
+
+| | **PactPay web app** | **PactPay Guard extension** |
+|---|---|---|
+| For | An AI agent shops for you | You (or your AI browser) shop anywhere |
+| Rules | Approved in the web app | Said in plain words and **approved in a pop-up right on the page** |
+| Money | PayPal authorizes, then captures or voids | Stops the pay button; never moves money itself |
+| Bring your own agent | Yes (MCP / HTTP key) | Works with agent-driven browsers too |
+| Account | Sign in | None needed. **Optionally link** to share rules and Activity |
+
+**How a check works**
+1. **Code reader** (in the extension, no model): reads the itemized charges and the total, finds text a human can't see (opacity 0, off-screen, 0px font, same colour as the background, clipped, HTML comments, alt text) and reads money drawn by CSS `::before/::after`.
+2. **Screenshot reader** (optional, with your rules): a vision model reads what you actually see. Its reading is data, never a decision.
+3. **Fixed code decides** (`packages/pact-core/src/page-guard.ts`): hidden instructions or CSS-drawn charges block; each reading is checked against your rules; if the two readers disagree about the money, nothing is called safe.
+4. **A speed bump on the pay button** when a checkout is unsafe or unverified. It applies to an AI agent's clicks as well as yours.
+
+Eyes and code each catch what the other can't: invisible text aimed at an AI is only in the code, and a charge drawn with CSS is only on the screen.
+
+**Set your rules without leaving the page.** Press *Set my rules* on the Guard card (or in the toolbar popup). A pop-up asks in plain words, drafts the rules (AI when a model is configured, a transparent rule-based parser otherwise), shows each one as **MUST** or **NICE** and whether **Guard checks this** or only the shopping agent can, and creates the approval and a 24-hour agent key when you press *Approve*. When the key expires, Guard offers one-click renewal of the same rules.
+
+| Mode | Rules come from | Models called | Stored |
+|---|---|---|---|
+| **Quick Guard** (nothing set up) | A budget in the popup (default $40) | None | Nothing |
+| **Your rules** (approved in the pop-up, or a key from the web app) | Your approved Purchase Pact | Optional vision cross-check | Host, path, verdict, amounts, findings (never screenshots or page text), shown in **Activity → Guard checks** |
+
+**Linked to your account (optional).** On `/extension`, press *Link my extension*: a one-time, 5-minute code moves the extension onto your account's data scope, so its rules and checks appear in the web app's Activity. Each install has its own private device identity until then.
+
+**Install and server address.** Download from `/extension` on your deployment: the zip is generated on the fly with *that site's address* already inside, so it works on whatever URL you deploy to. If you load the `extension/` folder directly (*Load unpacked*), set `baseUrl` once in `extension/config.js` (or in the popup under Advanced).
+
+Try it in 60 seconds: open `/extension`, download and load the extension, open `/store`, and click through the five checkouts (honest, hidden fee, CSS-drawn fee, invisible AI instruction, over budget). The demo store is a fictional merchant so no third-party site is involved. Details: [`extension/README.md`](extension/README.md).
+
+---
+
 ## What protects the money (and what is only a tripwire)
 
 - **Fixed rules are the protection.** Budget, currency, arithmetic, freshness and the settlement gate are plain code with no model in it. If a page or a listing talks an AI into agreeing to something, the numbers still have to fit your approved limits, or the hold is voided. The model has no tool to edit rules, raise a limit or release money (ADR-002).
@@ -208,9 +265,12 @@ Verify:
 
 ```bash
 pnpm --filter @pactpay/pact-core typecheck
-pnpm --filter @pactpay/pact-core test        # 184 tests, no network
+pnpm --filter @pactpay/pact-core test        # 244 tests, no network
 pnpm --filter web typecheck
 pnpm --filter web build
+
+# the browser extension (own package, not part of the pnpm workspace)
+cd extension && npm install && npm test     # 31 tests: reader vs the demo store, reader -> verdict, the on-page UI, zip builder
 ```
 
 ## Limitations and constraints
@@ -230,9 +290,10 @@ The ones that matter most:
 ```
 apps/web              Next.js app: the one-page Shop workflow (agent + inspection + settle), order page, Activity, API routes
 packages/pact-core    Pure TypeScript: policy engine, settlement gate, checkout inspection, agent loop,
-                      untrusted-text guard, audit chain, autonomy (184 tests)
+                      untrusted-text guard, audit chain, autonomy, page guard (244 tests)
 lib                   Server modules: Meta model gateway (llm-provider.ts), PostgreSQL, PayPal, accounts, inspections
 scripts               MCP server, Muse CLI agent, red-team, drift tools
+extension              PactPay Guard, a Manifest V3 browser extension (code reader, on-page card and rules pop-up, popup, 31 tests)
 demo-kit              3:00 advert kit: storyboard, AI video prompts, voiceover, captions, scene cards
 docs                  Judge guide, architecture, diagrams, Meta integration, submission answers, limitations, ADRs
 ```

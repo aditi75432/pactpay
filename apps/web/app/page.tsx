@@ -174,12 +174,25 @@ export default function Home() {
 
   return (
     <AppShell>
-      <section className="pp-hero">
-        <p className="pp-eyebrow">Safer shopping with AI agents</p>
-        <h1 className="pp-h1" style={{ marginTop: 14, maxWidth: 14 + "em" }}>Let your AI agent shop. Keep the final say.</h1>
-        <p className="pp-lede" style={{ marginTop: 18 }}>
-          Say what you want. A Meta Muse agent shops for you, PayPal holds the money, and Muse reads the Sandbox checkout evidence twice. Fixed rules, not an AI, decide whether the payment can move.
-        </p>
+      <section className="pp-hero pp2-hero">
+        <div>
+          <p className="pp-eyebrow">Agentic commerce, with PayPal holding the money</p>
+          <h1 className="pp-h1" style={{ marginTop: 14, maxWidth: "13em" }}>Let your AI agent shop. <span className="pp2-accent">PayPal holds the money</span> until it&apos;s right.</h1>
+          <p className="pp-lede" style={{ marginTop: 18 }}>
+            Say what you want. An AI agent finds a real offer and PayPal puts a hold on your payment. Right before release, fixed code re-checks the live offer and the real checkout page. If anything slipped, the hold is cancelled and you are never charged.
+          </p>
+          <div className="pp-row" style={{ marginTop: 20, gap: 10 }}>
+            <a className="pp-btn pp-btn-primary" href="#ask-title">Try the agent</a>
+            <a className="pp-btn pp-btn-secondary" href="/extension">Get the Guard extension</a>
+          </div>
+        </div>
+        <aside className="pp2-proof" aria-label="What PactPay stops">
+          <div className="pp2-proof-head">Live from the checkout inspector</div>
+          <div className="pp2-proof-row pp2-bad"><b>Do not pay</b><span>$9.99 fee isn&apos;t itemized</span></div>
+          <div className="pp2-proof-row pp2-bad"><b>Do not pay</b><span>Invisible text tells an AI to ignore your budget</span></div>
+          <div className="pp2-proof-row pp2-ok"><b>Safe to pay</b><span>Every charge matches what you approved</span></div>
+          <div className="pp2-proof-foot">PayPal Orders &amp; Payments APIs · authorize, then capture or void</div>
+        </aside>
       </section>
 
       <div style={{ marginTop: 36 }}>
@@ -332,6 +345,28 @@ export default function Home() {
         <div className="pp-how-item"><div className="pp-how-n">1</div><h3 className="pp-h3">You set the rules</h3><p className="pp-muted pp-small" style={{ marginTop: 6 }}>Budget, must-haves and preferences, in plain words. You approve them, and they&apos;re locked on our server.</p></div>
         <div className="pp-how-item"><div className="pp-how-n">2</div><h3 className="pp-h3">Your payment is held</h3><p className="pp-muted pp-small" style={{ marginTop: 6 }}>The agent finds a real offer. PayPal holds the amount. Nothing has been charged yet.</p></div>
         <div className="pp-how-item"><div className="pp-how-n">3</div><h3 className="pp-h3">Released only if it still matches</h3><p className="pp-muted pp-small" style={{ marginTop: 6 }}>Right before release, PactPay re-checks the seller&apos;s current offer. If anything slipped, the hold is cancelled.</p></div>
+      </section>
+
+      <section className="pp2-split" aria-label="Works on any store">
+        <div className="pp-card">
+          <p className="pp-eyebrow">New · PactPay Guard</p>
+          <h2 className="pp-h2" style={{ marginTop: 8 }}>The same protection, on any store you already use.</h2>
+          <p className="pp-muted" style={{ marginTop: 8 }}>A browser extension reads the real checkout before you, or the AI agent driving your browser, clicks pay. It catches hidden fees, charges drawn by CSS, and invisible instructions that tell an AI to ignore your budget.</p>
+          <div className="pp-row" style={{ marginTop: 14, gap: 10 }}>
+            <a className="pp-btn pp-btn-primary pp-btn-sm" href="/extension">Install the extension</a>
+            <a className="pp-btn pp-btn-secondary pp-btn-sm" href="/store" target="_blank" rel="noopener">Try the demo store</a>
+          </div>
+        </div>
+        <div className="pp-card">
+          <p className="pp-eyebrow">Built on PayPal</p>
+          <h2 className="pp-h2" style={{ marginTop: 8 }}>Authorize first. Capture only if it still matches.</h2>
+          <ul className="pp2-list">
+            <li><b>Orders v2</b> creates an <code>AUTHORIZE</code> order the buyer approves on PayPal</li>
+            <li><b>Payments v2</b> captures the authorization, or voids it with $0 moved</li>
+            <li><b>Webhooks</b> reconcile PayPal&apos;s own record with the gate&apos;s decision</li>
+            <li><b>MCP + HTTP</b> let any agent shop through the same gate</li>
+          </ul>
+        </div>
       </section>
 
       <p className="pp-footnote">

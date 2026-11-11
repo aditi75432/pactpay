@@ -137,7 +137,7 @@ export default function PactLabPage() {
     <main style={{ minHeight: "100vh", background: "radial-gradient(ellipse at 15% 0%, #16372d 0%, #091311 48%, #07100e 100%)", color: "#edf7f2", fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, sans-serif", padding: "32px 20px 64px" }}>
       <div style={{ maxWidth: 1240, margin: "0 auto" }}>
         <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 44 }}>
-          <a href="/" style={{ color: "#edf7f2", textDecoration: "none", fontSize: 15, fontWeight: 800, letterSpacing: 2 }}>PACTPAY <span style={{ color: "#7fe2ab" }}>///</span></a>
+          <a href="/" aria-label="PactPay home" style={{ display: "inline-flex" }}>{/* eslint-disable-next-line @next/next/no-img-element */}<img src="/brand/pactpay-logo-light.svg" alt="PactPay" height={32} style={{ height: 32, width: "auto" }} /></a>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <span style={{ border: "1px solid #705526", color: "#ffd891", borderRadius: 100, padding: "6px 10px", fontSize: 11, letterSpacing: 1.2, fontWeight: 800 }}>SIMULATED COMMERCE DATA</span>
             <a href="/" style={{ color: "#a5b8b0", fontSize: 13 }}>Payment sandbox ↗</a>

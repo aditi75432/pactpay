@@ -61,7 +61,12 @@ type ControlCenterPayload = {
   capturePerformedByPactPay: false;
 };
 
-type Tab = "transactions" | "policy-runs";
+type Tab = "transactions" | "policy-runs" | "guard";
+
+type GuardRow = {
+  id: string; host: string; path: string; outcome: "SAFE_TO_PAY" | "DO_NOT_PAY" | "CANNOT_VERIFY"; confidence: "basic" | "cross-checked";
+  total: number | null; currency: string | null; fees: number | null; findings: Array<{ title: string; excerpt: string; how: string; blocking: boolean }>; reasons: string[]; readers: string; createdAt: string;
+};
 type SelectedRow = { kind: "transaction"; row: TransactionRow } | { kind: "policy-run"; row: PolicyRunRow } | null;
 
 const modules = [AllCommunityModule];
@@ -145,6 +150,7 @@ export default function ControlCenterPage() {
   const [tab, setTab] = useState<Tab>("transactions");
   const [filterText, setFilterText] = useState("");
   const [selected, setSelected] = useState<SelectedRow>(null);
+  const [guardChecks, setGuardChecks] = useState<GuardRow[]>([]);
 
   const load = useCallback(async (quiet = false) => {
     if (quiet) setRefreshing(true); else setLoading(true);
@@ -154,6 +160,11 @@ export default function ControlCenterPage() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Could not load the Control Center.");
       setData(payload as ControlCenterPayload);
+      // Guard checks come from the browser extension. They are optional, so a failure here never breaks the page.
+      try {
+        const guard = await fetch("/api/guard/history", { cache: "no-store" });
+        if (guard.ok) setGuardChecks(((await guard.json()) as { checks?: GuardRow[] }).checks ?? []);
+      } catch { /* extension history is optional */ }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unexpected Control Center error.");
     } finally {
@@ -195,6 +206,17 @@ export default function ControlCenterPage() {
   ], []);
 
   const allTransactions = data?.transactions ?? [];
+  const guardColumns = useMemo<ColDef<GuardRow>[]>(() => [
+    { field: "createdAt", headerName: "When", minWidth: 170, valueFormatter: (p) => p.value ? new Date(p.value).toLocaleString() : "—", sort: "desc" },
+    { field: "host", headerName: "Store", minWidth: 190 },
+    { field: "outcome", headerName: "Verdict", minWidth: 150, valueFormatter: (p) => p.value === "SAFE_TO_PAY" ? "Safe to pay" : p.value === "DO_NOT_PAY" ? "Do not pay" : "Can't verify", cellStyle: (p) => ({ fontWeight: 850, color: p.value === "SAFE_TO_PAY" ? "#7fe2ab" : p.value === "DO_NOT_PAY" ? "#ff9d92" : "#ffd891" }) },
+    { field: "total", headerName: "Total", minWidth: 110, valueFormatter: (p) => p.value === null || p.value === undefined ? "—" : `${p.data?.currency ?? "USD"} ${Number(p.value).toFixed(2)}` },
+    { field: "fees", headerName: "Other fees", minWidth: 120, valueFormatter: (p) => p.value ? Number(p.value).toFixed(2) : "0.00" },
+    { field: "findings", headerName: "Hidden / drawn findings", minWidth: 260, valueGetter: (p) => (p.data?.findings ?? []).filter((item) => item.blocking).map((item) => item.title).join(" · ") || "None" },
+    { field: "confidence", headerName: "Readers", minWidth: 150, valueFormatter: (p) => p.value === "cross-checked" ? "Code + AI screenshot" : "Code reader" },
+    { field: "reasons", headerName: "Why", minWidth: 320, valueGetter: (p) => (p.data?.reasons ?? [])[0] ?? "Matched your rules" },
+  ], []);
+
   const [preset, setPreset] = useState<"all" | "captured" | "blocked" | "evidence" | "review" | "agent">("all");
   const matchesPreset = (tx: TransactionRow, which: typeof preset) =>
     which === "all" ? true
@@ -221,9 +243,12 @@ export default function ControlCenterPage() {
     <main style={{ minHeight: "100vh", background: "radial-gradient(ellipse at 15% 0%, #16372d 0%, #091311 48%, #07100e 100%)", color: "#edf7f2", padding: "26px 20px 64px", fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" }}>
       <div style={{ maxWidth: 1440, margin: "0 auto" }}>
         <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 38, paddingBottom: 18, borderBottom: "1px solid #28443a" }}>
-          <a href="/" style={{ color: "#edf7f2", textDecoration: "none", fontWeight: 950, letterSpacing: 2 }}>PACTPAY <span style={{ color: "#7fe2ab" }}>///</span></a>
+          <a href="/" aria-label="PactPay home" style={{ display: "inline-flex" }}>{/* eslint-disable-next-line @next/next/no-img-element */}<img src="/brand/pactpay-logo-light.svg" alt="PactPay" height={32} style={{ height: 32, width: "auto" }} /></a>
           <nav aria-label="Main navigation" style={{ display: "flex", gap: 17, flexWrap: "wrap", fontSize: 14 }}>
-            <a href="/agent" style={{ color: "#a5b8b0" }}>Shopping Agent</a>
+            <a href="/" style={{ color: "#a5b8b0" }}>Shop</a>
+            <a href="/extension" style={{ color: "#a5b8b0" }}>Guard extension</a>
+            <a href="/control-center" aria-current="page" style={{ color: "#edf7f2", fontWeight: 800 }}>Activity</a>
+            <a href="/judges" style={{ color: "#a5b8b0" }}>Judge guide</a>
             <a href="/discover" style={{ color: "#a5b8b0" }}>Discovery</a>
             <a href="/evidence" style={{ color: "#a5b8b0" }}>Evidence Desk</a>
             <a href="/pact-lab" style={{ color: "#a5b8b0" }}>Policy Lab</a>
@@ -272,6 +297,7 @@ export default function ControlCenterPage() {
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <button type="button" onClick={() => { setTab("transactions"); setSelected(null); }} style={{ border: "1px solid #42664c", background: tab === "transactions" ? "#173b2b" : "transparent", color: tab === "transactions" ? "#7fe2ab" : "#a5b8b0", borderRadius: 9, padding: "10px 13px", fontWeight: 850, cursor: "pointer" }}>Transactions ({transactions.length})</button>
               <button type="button" onClick={() => { setTab("policy-runs"); setSelected(null); }} style={{ border: "1px solid #42664c", background: tab === "policy-runs" ? "#173b2b" : "transparent", color: tab === "policy-runs" ? "#7fe2ab" : "#a5b8b0", borderRadius: 9, padding: "10px 13px", fontWeight: 850, cursor: "pointer" }}>Policy runs ({policyRuns.length})</button>
+              <button type="button" onClick={() => { setTab("guard"); setSelected(null); }} style={{ border: "1px solid #42664c", background: tab === "guard" ? "#173b2b" : "transparent", color: tab === "guard" ? "#7fe2ab" : "#a5b8b0", borderRadius: 9, padding: "10px 13px", fontWeight: 850, cursor: "pointer" }}>Guard checks ({guardChecks.length})</button>
             </div>
             <div style={{ display: "flex", gap: 8, flex: "1 1 250px", maxWidth: 480 }}>
               <input aria-label="Filter rows" value={filterText} onChange={(event) => setFilterText(event.currentTarget.value)} placeholder="Filter by ID, status, merchant, decision…" style={{ flex: 1, minWidth: 0, borderRadius: 9, border: "1px solid #28443a", padding: "10px 12px", background: "#07110e", color: "#edf7f2", fontSize: 14 }} />
@@ -293,6 +319,17 @@ export default function ControlCenterPage() {
                 getRowId={(params) => params.data.transaction_id}
                 onRowClicked={selectTransaction}
                 overlayNoRowsTemplate={'<span style="padding:12px;color:#a5b8b0;">No transactions yet. A first row appears after an authorization flow runs.</span>'}
+              /> : tab === "guard" ? <AgGridReact<GuardRow>
+                theme={gridTheme}
+                rowData={guardChecks}
+                columnDefs={guardColumns}
+                defaultColDef={baseColDef}
+                quickFilterText={filterText}
+                pagination
+                paginationPageSize={10}
+                paginationPageSizeSelector={[10, 20, 50]}
+                getRowId={(params) => params.data.id}
+                overlayNoRowsTemplate={'<span style="padding:12px;color:#a5b8b0;">No Guard checks yet. Install the PactPay Guard extension, connect your key and open a checkout.</span>'}
               /> : <AgGridReact<PolicyRunRow>
                 theme={gridTheme}
                 rowData={policyRuns}
