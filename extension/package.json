@@ -1,0 +1,15 @@
+{
+  "name": "pactpay-guard-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PactPay Guard: a Manifest V3 browser extension that checks the real checkout page before an AI agent (or you) pays.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node scripts/test.mjs",
+    "pack": "node scripts/pack.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0",
+    "tsx": "^4.23.15"
+  }
+}
