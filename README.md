@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://pactpay-8ay2.onrender.com/">Live app</a> ·
-  <a href="[YOUR_YOUTUBE_LINK]">3-minute demo</a> ·
+  <a href="https://www.youtube.com/watch?v=BvjhTtBcZxc">3-minute demo</a> ·
   <a href="docs/JUDGES.md">Judge guide</a> ·
   <a href="#run-it-locally">Run locally</a> ·
   <a href="LICENSE">MIT</a>
