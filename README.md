@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://pactpay-8ay2.onrender.com/">Live app</a> ·
-  <a href="https://www.youtube.com/watch?v=BvjhTtBcZxc">3-minute demo</a> ·
+  <a href="[YOUR_YOUTUBE_LINK]">3-minute demo</a> ·
   <a href="docs/JUDGES.md">Judge guide</a> ·
   <a href="#run-it-locally">Run locally</a> ·
   <a href="LICENSE">MIT</a>
@@ -24,9 +24,8 @@ AI agents can already browse and check out. What they can't do reliably is notic
 
 ## Try it in 60 seconds (judges, start here)
 
-|||
+| | |
 |---|---|
-| **Demo** | https://www.youtube.com/watch?v=BvjhTtBcZxc |
 | **Live app** | https://pactpay-8ay2.onrender.com/ (free Render instance: the first load can take ~30 s to wake up) |
 | **App login** | `judge` / `PactPay-Judge-2026` (shared demo account; sign up for a private view) |
 | **PayPal Sandbox buyer** | `aditi@personal.mail.com` / `D<#k<y7X` (a throwaway sandbox account: test money only) |
@@ -103,26 +102,29 @@ Every mutating PayPal call uses an idempotency key, and uncertain outcomes go to
 
 ## How AI is used
 
-PactPay runs on **Meta Muse** models (any OpenAI-compatible provider can be swapped in). The AI is used heavily, but it never holds authority.
+PactPay separates AI interpretation from payment authority. The hosted configuration uses Groq's OpenAI-compatible API with different models for text/agent work and visual checkout reading; deterministic PactPay code remains responsible for all policy checks and PayPal settlement decisions.
 
-| Model | Role |
+| Model / service | Role |
 |---|---|
-| **Muse Spark 1.3** (Meta Model API) | **Primary model.** Writes rules (strict `json_schema`), runs the tool-calling shopping agent, reads checkout screenshots (vision), reads seller listings, explains outcomes. |
-| **Muse Spark Open** (open weights, via Baseten) | The **second independent reader** in the Checkout Inspector, and the same features on open weights. No JSON mode, so JSON is requested in the prompt and validated. |
-| **Muse Voice Transcribe 1.0** | "Say it instead": speak a purchase, get the text (WAV, push-to-talk). |
+| **OpenAI GPT-OSS 20B via Groq** (`openai/gpt-oss-20b`) | Primary text model for natural-language Purchase Pact drafting, constrained tool-calling shopping agent and explanations. |
+| **Qwen 3.8 27B via Groq** (`qwen/qwen3.8-27b`) | Vision-capable checkout screenshot reader. PactPay asks for two independently prompted readings; fixed code checks their agreement and validates the evidence. |
+| **Whisper Large v3 Turbo via Groq** (`whisper-large-v3-turbo`) | Voice transcription for spoken purchase requests. |
+
+Meta Model API (Muse Spark) and Muse Spark Open via Baseten remain supported as alternative provider configurations. The model and provider actually active in a deployment are shown by `/api/ai/status`; the public description and testing materials should match that runtime configuration.
 
 What makes this more than a prompt wrapper:
 
 - **A real agent loop.** The model picks tools, PactPay answers every call, bounds the loop, caps tool output, and stops when a human must act. Tested without a network ([`agent-loop.test.ts`](packages/pact-core/test/agent-loop.test.ts)).
-- **Multimodal verification.** A vision model reads a checkout screenshot; fixed code does the arithmetic and the policy.
-- **Cross-model agreement.** With both keys set, two different models read the page independently. If they disagree, nothing is called safe.
-- **Protocol-correct use** of `max_completion_tokens`, `reasoning_effort`, `json_schema` output, `tool_choice: "auto"` and full tool-call replay. See [`docs/META-INTEGRATION.md`](docs/META-INTEGRATION.md).
+- **Multimodal verification.** A vision-capable model reads a checkout screenshot; fixed code does the arithmetic and the policy.
+- **Independent readings.** The checkout page is inspected twice. When distinct vision models are configured, PactPay records a cross-model comparison; otherwise it performs two differently prompted reads with one model.
+- **Protocol-correct use.** Groq receives `max_completion_tokens`, mapped reasoning effort, JSON Schema output and tool calls; the provider gateway also preserves Meta/Baseten-specific request handling. See [`docs/META-INTEGRATION.md`](docs/META-INTEGRATION.md).
 
 ### Full tool list
 
 | Tool | Role | Where |
 |---|---|---|
 | PayPal Sandbox (Orders + Payments) | Authorize, capture, void, read-back. Test money only | `lib/paypal.ts` |
+| Groq API | GPT-OSS 20B for text/agent tasks, Qwen 3.8 27B for vision, Whisper for voice | `lib/llm-provider.ts`, voice route |
 | Channel3 | Real product catalog and offers; product-detail refresh at settlement | `packages/pact-core/src/channel3.ts` |
 | AG Grid | Activity: transactions, policy runs and **Guard checks** grids with filters and quick-filter | `apps/web/app/control-center` |
 | Render | Hosting blueprint | `render.yaml` |
@@ -311,13 +313,15 @@ pnpm dev                                 # http://localhost:3000
 
 | You want | You need |
 |---|---|
-| Rule drafting and voice input | `MODEL_API_KEY` (Meta Model API) |
-| The second reader and the open-weights path | `BASETEN_API_KEY` (set `AI_PROVIDER=baseten` to run *everything* on open weights) |
-| The full shop → hold → inspect → settle workflow | PayPal Sandbox keys (`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_BASE_URL`) and `CHANNEL3_API_KEY` |
+| Intent drafting and shopping agent | `GROQ_API_KEY`, `GROQ_MODEL` (default `openai/gpt-oss-20b`) |
+| Checkout screenshot inspection | `GROQ_API_KEY`, `GROQ_VISION_MODEL` (default `qwen/qwen3.8-27b`) |
+| Voice input | `GROQ_API_KEY`, `GROQ_STT_MODEL` (default `whisper-large-v3-turbo`) |
+| Full shop → hold → inspect → settle workflow | PayPal Sandbox keys (`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_BASE_URL`) and `CHANNEL3_API_KEY` |
 | Webhook signature verification | `PAYPAL_WEBHOOK_ID` |
+| Optional alternative AI providers | `MODEL_API_KEY` for Meta Muse or `BASETEN_API_KEY` for Muse Spark Open; set `AI_PROVIDER=meta` or `AI_PROVIDER=baseten` |
 | A shared demo login | `PACTPAY_DEMO_USERNAME`, `PACTPAY_DEMO_PASSWORD` |
 
-Without a model key the app falls back to a basic rule parser and says so on screen. If you set `AI_TIMEOUT_MS`, give it a number (for example `40000`) or leave it commented out.
+Without a configured model key the app falls back to a basic rule parser and says so on screen. For Groq, `AI_TIMEOUT_MS` overrides `GROQ_TIMEOUT_MS`; route-level defaults are used when neither is set. If you set `AI_TIMEOUT_MS`, give it a number (for example `40000`) or leave it commented out.
 
 **Deploy:** `render.yaml` is a ready Render blueprint (web service + Postgres).
 

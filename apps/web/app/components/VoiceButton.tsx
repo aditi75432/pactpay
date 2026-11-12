@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { VOICE_SAMPLE_RATE, encodeWav, resample } from "@pactpay/pact-core/wav";
 
 /**
- * "Say it." Records the microphone, converts it to the 24 kHz mono WAV that Meta's Muse Voice Transcribe accepts,
- * and hands the transcript to the page. Hidden when the deployment has no Meta Model API key.
+ * "Say it." Records the microphone, converts it to the 24 kHz mono WAV that the configured speech-to-text provider accepts,
+ * and hands the transcript to the page. Hidden when the deployment has no speech-to-text provider.
  */
 const MAX_SECONDS = 25;
 type State = "idle" | "listening" | "transcribing";
@@ -67,7 +67,7 @@ export default function VoiceButton({ onTranscript }: { onTranscript: (text: str
         const payload = await response.json() as { transcript?: string; error?: string };
         if (!response.ok || !payload.transcript) throw new Error(payload.error ?? "Couldn't transcribe that.");
         onTranscript(payload.transcript);
-        setMessage("Heard by Muse Voice Transcribe. Check the words, then turn them into rules.");
+        setMessage("Transcribed successfully. Check the words, then turn them into rules.");
       } catch (caught) { setMessage(caught instanceof Error ? caught.message : "Couldn't transcribe that."); }
       finally { setState("idle"); }
     }
@@ -82,10 +82,10 @@ export default function VoiceButton({ onTranscript }: { onTranscript: (text: str
         </button>
       ) : (
         <button type="button" className="pp-btn pp-btn-secondary pp-btn-sm" onClick={() => void start()} disabled={state === "transcribing"}>
-          {state === "transcribing" ? <><span className="pp-spinner pp-spinner-dark" aria-hidden="true" /> Muse is listening back…</> : <>🎙 Say it instead</>}
+          {state === "transcribing" ? <><span className="pp-spinner pp-spinner-dark" aria-hidden="true" /> Transcribing…</> : <>🎙 Say it instead</>}
         </button>
       )}
-      <span className="pp-tiny pp-muted" aria-live="polite">{message ?? "Powered by Meta Muse Voice Transcribe"}</span>
+      <span className="pp-tiny pp-muted" aria-live="polite">{message ?? "Powered by PactPay voice transcription"}</span>
     </div>
   );
 }

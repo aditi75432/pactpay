@@ -1,22 +1,16 @@
 /**
- * The Meta model gateway. Every AI call in PactPay goes through here, and every provider is a Meta model:
+ * Provider gateway for PactPay. AI models only draft, reason, call constrained tools or read evidence.
+ * Deterministic PactPay code retains all policy and payment-settlement authority.
  *
- *   meta     Meta Model API (https://api.meta.ai/v1), Muse Spark. Key: MODEL_API_KEY (alias META_API_KEY).
- *   baseten  Muse Spark Open, Meta's open-weight model, served by Baseten. Key: BASETEN_API_KEY.
- *
- * Pick one with AI_PROVIDER, or let the order above decide. When both are configured the Checkout Inspector
- * uses them as two independent readers. The model only ever drafts or reads. It never has authority over a
- * payment: the settlement gate is fixed code.
- *
- * Notes taken from Meta's Chat Completions docs (dev.meta.ai):
- *   - output cap is `max_completion_tokens` (`max_tokens` is a deprecated alias)
- *   - `reasoning_effort` accepts minimal | low | medium | high | xhigh ("none" is a 400 on Muse Spark)
- *   - structured output uses response_format { type: "json_schema" }; tool_choice supports only "auto"
- *   - a tool-calling transcript must replay the assistant message and answer every tool_call
+ * Providers:
+ *   meta         Meta Model API (Muse Spark) — MODEL_API_KEY
+ *   baseten      Muse Spark Open via Baseten — BASETEN_API_KEY
+ *   groq         Groq text/agent model — GROQ_API_KEY + GROQ_MODEL
+ *   groq-vision  Groq multimodal reader — GROQ_API_KEY + GROQ_VISION_MODEL
  */
 import type { AssistantMessage, AgentToolSpec, ChatMessage } from "@pactpay/pact-core/agent-loop";
 
-export type ProviderId = "meta" | "baseten";
+export type ProviderId = "meta" | "baseten" | "groq" | "groq-vision";
 export type Effort = "minimal" | "low" | "medium" | "high";
 
 export interface Provider {
@@ -26,23 +20,25 @@ export interface Provider {
   apiKey: string;
   keyEnv: string;
   model: string;
-  /** True for Meta's open-weight models, which also qualify for the open-weights prize. */
   openWeights: boolean;
-  /** Parameter this provider uses to cap output length. */
   tokenParam: "max_completion_tokens" | "max_tokens";
-  /** Whether the provider documents `reasoning_effort`. */
   reasoningEffort: boolean;
-  /** Whether `response_format: json_schema` is supported. Muse Spark Open on Baseten has no structured-output or JSON mode. */
   structuredOutput: boolean;
+  vision: boolean;
 }
 
 const clean = (value: string | undefined): string => (value ?? "").trim();
-
 const BASETEN_DEFAULT_MODEL = "meta-models/muse-spark-open";
-/** An earlier example file used a `-1026` suffix that Baseten answers with 404, so that value is treated as the default. */
+const GROQ_DEFAULT_MODEL = "openai/gpt-oss-20b";
+const GROQ_DEFAULT_VISION_MODEL = "qwen/qwen3.8-27b";
+
 function basetenModel(): string {
   const configured = clean(process.env.BASETEN_MODEL);
   return !configured || configured === "meta-models/muse-spark-open-1026" ? BASETEN_DEFAULT_MODEL : configured;
+}
+
+function groqVisionModel(): string {
+  return clean(process.env.GROQ_VISION_MODEL) || GROQ_DEFAULT_VISION_MODEL;
 }
 
 function build(id: ProviderId): Provider | null {
@@ -53,56 +49,115 @@ function build(id: ProviderId): Provider | null {
       id, label: "Meta Model API", apiKey, keyEnv: "MODEL_API_KEY",
       baseUrl: (clean(process.env.META_API_BASE_URL) || "https://api.meta.ai/v1").replace(/\/$/, ""),
       model: clean(process.env.META_MODEL) || "muse-spark-1.3",
-      openWeights: false, tokenParam: "max_completion_tokens", reasoningEffort: true, structuredOutput: true,
+      openWeights: false, tokenParam: "max_completion_tokens", reasoningEffort: true,
+      structuredOutput: true, vision: true,
     };
   }
-  const apiKey = clean(process.env.BASETEN_API_KEY);
+
+  if (id === "baseten") {
+    const apiKey = clean(process.env.BASETEN_API_KEY);
+    if (!apiKey) return null;
+    return {
+      id, label: "Muse Spark Open (Baseten)", apiKey, keyEnv: "BASETEN_API_KEY",
+      baseUrl: (clean(process.env.BASETEN_BASE_URL) || "https://inference.baseten.co/v1").replace(/\/$/, ""),
+      model: basetenModel(),
+      openWeights: true, tokenParam: "max_tokens", reasoningEffort: false,
+      structuredOutput: false, vision: true,
+    };
+  }
+
+  if (id === "groq") {
+    const apiKey = clean(process.env.GROQ_API_KEY);
+    if (!apiKey) return null;
+    return {
+      id, label: "Groq inference API", apiKey, keyEnv: "GROQ_API_KEY",
+      baseUrl: (clean(process.env.GROQ_BASE_URL) || "https://api.groq.com/openai/v1").replace(/\/$/, ""),
+      model: clean(process.env.GROQ_MODEL) || GROQ_DEFAULT_MODEL,
+      openWeights: false, tokenParam: "max_completion_tokens", reasoningEffort: true,
+      structuredOutput: true, vision: false,
+    };
+  }
+
+  // GPT-OSS 20B is text-only. Keep screenshot inspection on a separately configured multimodal model.
+  const apiKey = clean(process.env.GROQ_API_KEY);
   if (!apiKey) return null;
+  const model = groqVisionModel();
+  const supportedVisionModel = model === "qwen/qwen3.8-27b" || model === "meta-models/muse-spark-open";
+  if (!supportedVisionModel) return null;
   return {
-    id, label: "Muse Spark Open (Baseten)", apiKey, keyEnv: "BASETEN_API_KEY",
-    baseUrl: (clean(process.env.BASETEN_BASE_URL) || "https://inference.baseten.co/v1").replace(/\/$/, ""),
-    model: basetenModel(),
-    openWeights: true, tokenParam: "max_tokens", reasoningEffort: false, structuredOutput: false,
+    id, label: "Groq vision API", apiKey, keyEnv: "GROQ_API_KEY",
+    baseUrl: (clean(process.env.GROQ_BASE_URL) || "https://api.groq.com/openai/v1").replace(/\/$/, ""),
+    model,
+    openWeights: model === "meta-models/muse-spark-open", tokenParam: "max_completion_tokens", reasoningEffort: true,
+    structuredOutput: true, vision: true,
   };
 }
 
 function isProviderId(value: unknown): value is ProviderId {
-  return value === "meta" || value === "baseten";
+  return value === "meta" || value === "baseten" || value === "groq" || value === "groq-vision";
 }
 
-/**
- * Chooses the provider. `requested` (for example the UI asking for the open-weights model) is honored only when
- * that provider is configured; otherwise AI_PROVIDER, then Meta Model API, then Muse Spark Open.
- */
+/** General text/agent provider. AI_PROVIDER is authoritative when explicitly set. */
 export function resolveProvider(requested?: unknown): Provider | null {
-  if (isProviderId(requested)) {
+  const forced = clean(process.env.AI_PROVIDER).toLowerCase();
+  if (forced === "groq") return build("groq");
+  if (forced === "meta") return build("meta");
+  if (forced === "baseten") return build("baseten");
+
+  if (isProviderId(requested) && requested !== "groq-vision") {
     const chosen = build(requested);
     if (chosen) return chosen;
   }
+  return build("groq") ?? build("meta") ?? build("baseten");
+}
+
+/** Vision providers are deliberately resolved separately: GPT-OSS 20B cannot accept image inputs. */
+export function resolveVisionProviders(): Provider[] {
   const forced = clean(process.env.AI_PROVIDER).toLowerCase();
-  if (isProviderId(forced)) {
-    const chosen = build(forced);
-    if (chosen) return chosen;
+  if (forced === "groq") {
+    const vision = build("groq-vision");
+    return vision ? [vision] : [];
   }
-  return build("meta") ?? build("baseten");
+  if (forced === "meta") {
+    return [build("meta"), build("baseten")].filter((item): item is Provider => item !== null);
+  }
+  if (forced === "baseten") {
+    return [build("baseten"), build("meta")].filter((item): item is Provider => item !== null);
+  }
+  return [build("groq-vision"), build("meta"), build("baseten")].filter((item): item is Provider => item !== null);
 }
 
-/** Providers that are configured right now. */
+export function resolveVisionProvider(): Provider | null {
+  return resolveVisionProviders()[0] ?? null;
+}
+
+/** Providers configured for the selected deployment mode. */
 export function configuredProviders(): Provider[] {
-  return (["meta", "baseten"] as const).map(build).filter((item): item is Provider => item !== null);
+  const forced = clean(process.env.AI_PROVIDER).toLowerCase();
+  if (forced === "groq") return [build("groq"), build("groq-vision")].filter((item): item is Provider => item !== null);
+  if (forced === "meta") return [build("meta"), build("baseten")].filter((item): item is Provider => item !== null);
+  if (forced === "baseten") return [build("baseten"), build("meta")].filter((item): item is Provider => item !== null);
+  return [build("groq"), build("groq-vision"), build("meta"), build("baseten")].filter((item): item is Provider => item !== null);
 }
 
-/** The Meta Model API provider, needed for models that exist only there (Muse Voice Transcribe). */
 export function metaApiProvider(): Provider | null {
   return build("meta");
 }
 
-/**
- * Per-call timeout. AI_TIMEOUT_MS overrides the default, but a blank or invalid value (for example a copied
- * `AI_TIMEOUT_MS=` line) means "not set". It must never turn into 0 and clamp every call to the minimum.
- */
+export function groqSpeechConfig(): { apiKey: string; baseUrl: string; model: string } | null {
+  const apiKey = clean(process.env.GROQ_API_KEY);
+  if (!apiKey) return null;
+  return {
+    apiKey,
+    baseUrl: (clean(process.env.GROQ_BASE_URL) || "https://api.groq.com/openai/v1").replace(/\/$/, ""),
+    model: clean(process.env.GROQ_STT_MODEL) || "whisper-large-v3-turbo",
+  };
+}
+
+/** Per-call timeout. AI_TIMEOUT_MS wins; GROQ_TIMEOUT_MS applies to Groq deployments. */
 export function aiTimeoutMs(fallbackMs: number, min = 3_000, max = 60_000): number {
-  const raw = clean(process.env.AI_TIMEOUT_MS);
+  const forced = clean(process.env.AI_PROVIDER).toLowerCase();
+  const raw = clean(process.env.AI_TIMEOUT_MS) || (forced === "groq" ? clean(process.env.GROQ_TIMEOUT_MS) : "");
   const configured = raw === "" ? NaN : Number(raw);
   const chosen = Number.isFinite(configured) && configured > 0 ? configured : fallbackMs;
   return Math.min(max, Math.max(min, chosen));
@@ -111,7 +166,6 @@ export function aiTimeoutMs(fallbackMs: number, min = 3_000, max = 60_000): numb
 export interface ModelRequest {
   messages: ReadonlyArray<ChatMessage | { role: string; content?: unknown; tool_calls?: unknown; tool_call_id?: string }>;
   tools?: readonly AgentToolSpec[];
-  /** e.g. { type: "json_schema", json_schema: { name, schema, strict: false } } */
   responseFormat?: Record<string, unknown>;
   temperature?: number;
   maxTokens: number;
@@ -121,7 +175,6 @@ export interface ModelRequest {
 
 export interface ModelReply {
   ok: boolean;
-  /** HTTP status, or 0 when the request never completed (timeout, network). */
   status: number;
   content: string;
   message: AssistantMessage | null;
@@ -138,56 +191,18 @@ function contentText(value: unknown): string {
   return "";
 }
 
-// async function providerError(response: Response): Promise<string> {
-//   try {
-//     const payload = await response.clone().json() as { error?: { message?: unknown; code?: unknown } | string };
-//     const error = payload.error;
-//     if (typeof error === "string") return error.slice(0, 400);
-//     if (error && typeof error === "object" && typeof error.message === "string") return error.message.slice(0, 400);
-//   } catch { /* not JSON */ }
-//   return `HTTP ${response.status}`;
-// }
-
 async function providerError(response: Response): Promise<string> {
   try {
-    const payload = await response.clone().json() as {
-      error?: {
-        message?: unknown;
-        code?: unknown;
-        type?: unknown;
-        param?: unknown;
-      } | string;
-    };
-
+    const payload = await response.clone().json() as { error?: { message?: unknown; code?: unknown; type?: unknown } | string };
     const error = payload.error;
-
-    if (typeof error === "string") {
-      return error.slice(0, 400);
-    }
-
+    if (typeof error === "string") return error.slice(0, 400);
     if (error && typeof error === "object") {
-      return [
-        typeof error.message === "string"
-          ? error.message.slice(0, 400)
-          : "",
-        typeof error.type === "string"
-          ? `type=${error.type}`
-          : "",
-        typeof error.code === "string"
-          ? `code=${error.code}`
-          : "",
-        typeof error.param === "string"
-          ? `param=${error.param}`
-          : ""
-      ].filter(Boolean).join(" | ");
+      const parts = [error.message, error.type, error.code].filter((value): value is string => typeof value === "string" && value.length > 0);
+      if (parts.length) return parts.join(" | ").slice(0, 500);
     }
-  } catch {
-    // Non-JSON response.
-  }
-
+  } catch { /* not JSON */ }
   return `HTTP ${response.status}`;
 }
-
 
 async function once(provider: Provider, request: ModelRequest): Promise<ModelReply> {
   const body: Record<string, unknown> = {
@@ -196,7 +211,15 @@ async function once(provider: Provider, request: ModelRequest): Promise<ModelRep
     temperature: request.temperature ?? 0,
     [provider.tokenParam]: request.maxTokens,
   };
-  if (request.effort && provider.reasoningEffort) body.reasoning_effort = request.effort;
+  if (request.effort && provider.reasoningEffort) {
+    body.reasoning_effort = provider.id.startsWith("groq") && request.effort === "minimal" ? "low" : request.effort;
+  }
+  if (provider.id.startsWith("groq")) {
+    // GPT-OSS supports tool calls but not parallel tool calls. Hiding reasoning keeps the replayed
+    // assistant/tool transcript compatible with PactPay's bounded agent loop.
+    body.include_reasoning = false;
+    if (request.tools?.length) body.parallel_tool_calls = false;
+  }
   if (request.responseFormat && provider.structuredOutput) body.response_format = request.responseFormat;
   if (request.tools && request.tools.length > 0) {
     body.tools = request.tools.map((tool) => ({ type: "function", function: tool }));
@@ -204,7 +227,6 @@ async function once(provider: Provider, request: ModelRequest): Promise<ModelRep
     if (provider.id === "meta") body.parallel_tool_calls = false;
   }
   try {
-    console.log("Model request:", JSON.stringify(provider.model), provider.baseUrl);
     const response = await fetch(`${provider.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${provider.apiKey}` },
@@ -237,7 +259,6 @@ async function once(provider: Provider, request: ModelRequest): Promise<ModelRep
   }
 }
 
-/** Calls the provider once, retrying a single time on rate limits and brief outages. Never throws. */
 export async function callModel(provider: Provider, request: ModelRequest): Promise<ModelReply> {
   const first = await once(provider, request);
   if (first.status === 429 || first.status === 503 || first.status === 502) {
@@ -247,7 +268,6 @@ export async function callModel(provider: Provider, request: ModelRequest): Prom
   return first;
 }
 
-/** Pulls a JSON value out of model text that may be wrapped in a code fence or chatter. */
 export function parseModelJson(content: string): unknown {
   const trimmed = content.trim();
   const candidates = [trimmed, trimmed.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim(), /\{[\s\S]*\}/.exec(trimmed)?.[0] ?? ""];
@@ -258,7 +278,6 @@ export function parseModelJson(content: string): unknown {
   return null;
 }
 
-/** Safe-to-show description of what is configured. Never includes a key. */
-export function describeProviders(): Array<{ id: ProviderId; label: string; model: string; openWeights: boolean }> {
-  return configuredProviders().map((provider) => ({ id: provider.id, label: provider.label, model: provider.model, openWeights: provider.openWeights }));
+export function describeProviders(): Array<{ id: ProviderId; label: string; model: string; openWeights: boolean; vision: boolean }> {
+  return configuredProviders().map((provider) => ({ id: provider.id, label: provider.label, model: provider.model, openWeights: provider.openWeights, vision: provider.vision }));
 }

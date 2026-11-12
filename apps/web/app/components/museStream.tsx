@@ -56,9 +56,9 @@ export function Timeline({ events }: { events: Ev[] }) {
   return (
     <div className="pp-timeline" aria-live="polite">
       {events.map((event, index) => {
-        if (event.type === "start") return <div key={index} className="pp-ev pp-ev-model pp-enter"><div className="pp-ev-head">Model</div>{event.modelLabel} ({event.openWeights ? "open weights" : "Meta Model API"})</div>;
+        if (event.type === "start") return <div key={index} className="pp-ev pp-ev-model pp-enter"><div className="pp-ev-head">Model</div>{event.modelLabel} ({event.openWeights ? "open weights" : "AI inference API"})</div>;
         if (event.type === "catalog") return <div key={index} className="pp-ev pp-ev-good pp-enter"><div className="pp-ev-head">🛍️ Live shortlist ready</div>{Array.isArray(event.data.results) ? `${event.data.results.length} offers checked by PactPay's fixed rules. Product images and verdicts are shown below.` : typeof event.data.error === "string" ? event.data.error : "PactPay prepared the catalog results."}</div>;
-        if (event.type === "model") return <div key={index} className="pp-ev pp-ev-model pp-enter"><div className="pp-ev-head">🧠 Muse says</div>{event.text}</div>;
+        if (event.type === "model") return <div key={index} className="pp-ev pp-ev-model pp-enter"><div className="pp-ev-head">🧠 AI agent says</div>{event.text}</div>;
         if (event.type === "tool_call") return <div key={index} className="pp-ev pp-ev-tool pp-enter"><div className="pp-ev-head">🔧 {TOOL_TITLES[event.name] ?? event.name} <code>{event.name}</code></div></div>;
         if (event.type === "tool_result") return (
           <div key={index} className={`pp-ev pp-enter ${event.refused ? "pp-ev-refused" : event.status < 300 ? "pp-ev-good" : "pp-ev-tool"}`}>

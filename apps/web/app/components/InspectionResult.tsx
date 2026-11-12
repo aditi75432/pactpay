@@ -42,9 +42,9 @@ export default function InspectionResult({ result, attachedNote }: { result: Ins
       )}
       <div className="pp-reader">
         {result.readers.map((reader, index) => (
-          <span key={index}>Reader {index + 1}: {reader.modelLabel}{reader.openWeights ? " · open weights" : " · Meta Model API"} · {(reader.ms / 1000).toFixed(1)}s{reader.tokens ? ` · ${reader.tokens.toLocaleString()} tokens` : ""}</span>
+          <span key={index}>Reader {index + 1}: {reader.modelLabel}{reader.openWeights ? " · open weights" : " · AI inference API"} · {(reader.ms / 1000).toFixed(1)}s{reader.tokens ? ` · ${reader.tokens.toLocaleString()} tokens` : ""}</span>
         ))}
-        <span>{result.crossModel ? "Two different Meta models read it independently" : "Two independent reads by one model"}</span>
+        <span>{result.crossModel ? "Two different models read it independently" : "Two independent reads by one model"}</span>
         {result.attached?.reused && <span>This exact screenshot was already inspected for this order revision; the original verdict is retained.</span>}
       </div>
       <p className="pp-small" style={{ marginTop: 12 }}>The decision above was made by fixed rules, not by the model.{attachedNote ? ` ${attachedNote}` : ""}</p>

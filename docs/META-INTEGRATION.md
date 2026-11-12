@@ -1,16 +1,24 @@
+# AI provider integration notes
+
+The hosted Render configuration in `render.yaml` selects Groq. The runtime models are configured through `GROQ_MODEL`, `GROQ_VISION_MODEL` and `GROQ_STT_MODEL`. GPT-OSS 20B is text-only, so PactPay uses a separate vision-capable Groq model for checkout screenshots.
+
+The application also retains the Meta and Baseten adapters described below for local testing or alternative deployments. Do not describe Meta Muse as the active hosted model unless `/api/ai/status` actually reports a Muse model.
+
 # Meta integration
 
-Every AI call goes through one file: [`lib/llm-provider.ts`](../lib/llm-provider.ts). Every provider in it is a Meta model.
+Every AI call goes through one file: [`lib/llm-provider.ts`](../lib/llm-provider.ts). The gateway supports Groq as the hosted configuration and retains Meta/Baseten adapters for optional deployments.
 
 ## Providers
 
 | Provider | Model (default) | Endpoint | Key |
 |---|---|---|---|
-| Meta Model API | `muse-spark-1.3` | `https://api.meta.ai/v1/chat/completions` | `MODEL_API_KEY` |
-| Muse Spark Open via Baseten | `meta-models/muse-spark-open` | `https://inference.baseten.co/v1/chat/completions` | `BASETEN_API_KEY` |
-| Muse Voice Transcribe | `muse-voice-transcribe-1.0` | `https://api.meta.ai/v1/asr/transcribe` | `MODEL_API_KEY` |
+| Groq text / agent | `openai/gpt-oss-20b` | `https://api.groq.com/openai/v1/chat/completions` | `GROQ_API_KEY` |
+| Groq vision | `qwen/qwen3.8-27b` | `https://api.groq.com/openai/v1/chat/completions` | `GROQ_API_KEY` |
+| Groq voice | `whisper-large-v3-turbo` | `https://api.groq.com/openai/v1/audio/transcriptions` | `GROQ_API_KEY` |
+| Meta Model API (optional) | `muse-spark-1.3` | `https://api.meta.ai/v1/chat/completions` | `MODEL_API_KEY` |
+| Muse Spark Open via Baseten (optional) | `meta-models/muse-spark-open` | `https://inference.baseten.co/v1/chat/completions` | `BASETEN_API_KEY` |
 
-`AI_PROVIDER=meta|baseten` forces one. With neither key the app says so and uses a local rule parser. The header chip (`/api/ai/status`) always shows which models are live.
+`AI_PROVIDER=groq|meta|baseten` forces the hosted text/agent provider. `AI_PROVIDER=groq` uses `GROQ_MODEL` for text and `GROQ_VISION_MODEL` for screenshot reading. With neither key the app says so and uses a local rule parser. The header chip (`/api/ai/status`) always shows which models are live.
 
 ## Where each model is used
 
@@ -19,7 +27,7 @@ Every AI call goes through one file: [`lib/llm-provider.ts`](../lib/llm-provider
 | Rules from words | `POST /api/intent/compile` | `response_format: json_schema` (strict). On HTTP 400, retries with the schema in the prompt. Output is validated by `normalizeIntentCompilation`. |
 | Voice input | `POST /api/voice/transcribe` | Browser records mono 16-bit WAV at 24 kHz (`pact-core/src/wav.ts`); server posts multipart `request` + `audio`. |
 | Muse Agent (`/agent` step) | `POST /api/muse-agent` (NDJSON stream) | Tool calling with `tool_choice: "auto"`; loop in `pact-core/src/agent-loop.ts`. |
-| Checkout inspection (order page, automatic) | `GET /api/shop/checkout-page` then `POST /api/inspector/checkout` | Two parallel vision calls with `image_url` data URLs. Two different Meta models when both keys exist. |
+| Checkout inspection (order page, automatic) | `GET /api/shop/checkout-page` then `POST /api/inspector/checkout` | Two parallel vision calls with `image_url` data URLs. Two differently prompted vision reads; with the hosted Groq profile both use the configured Groq vision model. |
 | Seller-text reader | `POST /api/evidence/extract` | Claims kept only if the quote appears verbatim in the source. |
 | Inspector → settlement | `POST /api/inspector/checkout` with `transactionId` | Verdict saved per order; read by the settlement route as a gate fact. |
 | Outcome explanation | `POST /api/explain` | Discarded if it introduces any number not in the input. |
@@ -46,7 +54,7 @@ Every AI call goes through one file: [`lib/llm-provider.ts`](../lib/llm-provider
 
 ## Timeouts
 
-`AI_TIMEOUT_MS` is optional. A blank or non-numeric value falls back to the route default, and any value is clamped to 3-60 seconds. Short structured calls (rules, evidence) send `reasoning_effort: "minimal"` so Muse Spark answers quickly.
+`AI_TIMEOUT_MS` is optional. A blank or non-numeric value falls back to the route default, and any value is clamped to 3-60 seconds. The Groq adapter maps `minimal` to `low`; set `GROQ_TIMEOUT_MS` for Groq calls, or `AI_TIMEOUT_MS` to override all provider defaults.
 
 ## What has and hasn't been verified
 

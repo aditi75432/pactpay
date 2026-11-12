@@ -3,7 +3,7 @@ import { callModel, parseModelJson, type Provider } from "../../../lib/llm-provi
 
 /**
  * The vision reader shared by the Checkout Inspector (/api/inspector/checkout) and PactPay Guard (/api/guard/check).
- * A vision model reads a screenshot of a checkout page and reports what it sees. The reading is DATA, never a decision.
+ * A vision-capable model reads a screenshot of a checkout page and reports what it sees. The reading is DATA, never a decision.
  * Moved verbatim out of the Inspector route so both callers read pages exactly the same way.
  */
 export const SYSTEM = [

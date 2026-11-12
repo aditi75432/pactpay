@@ -94,9 +94,9 @@ export default function MuseAgent({ searchQuery, onUseClassic }: { searchQuery: 
   return (
     <AppShell>
       <section className="pp-muse-hero">
-        <p className="pp-eyebrow">Meta Muse Spark · tool-calling agent</p>
-        <h1>{hold ? "Your payment is on hold." : "Your Muse agent is shopping."}</h1>
-        <p>Muse decides which tools to call: read your rules, search real stores, rank offers, ask for a hold. Those are its only tools. It can&rsquo;t change a rule, raise its own limit, or release money.</p>
+        <p className="pp-eyebrow">PactPay AI · tool-calling shopping agent</p>
+        <h1>{hold ? "Your payment is on hold." : "Your AI agent is shopping."}</h1>
+        <p>The agent decides which tools to call: read your rules, search real stores, rank offers, ask for a hold. Those are its only tools. It can&rsquo;t change a rule, raise its own limit, or release money.</p>
       </section>
       <div style={{ marginTop: 24 }}>
         <StepTracker current={hold ? 3 : 2} labels={FLOW_STEPS} />
@@ -113,7 +113,7 @@ export default function MuseAgent({ searchQuery, onUseClassic }: { searchQuery: 
               <div className="pp-card-head">
                 <div>
                   <h2 className="pp-h3" id="agent-log">Live agent log</h2>
-                  <p className="pp-small pp-muted" style={{ marginTop: 4 }}>{searchQuery ? `Searching for “${searchQuery}”. ` : "Searching from your approved purchase request. "}PactPay evaluates the live catalog against your locked rules before Muse chooses a product.</p>
+                  <p className="pp-small pp-muted" style={{ marginTop: 4 }}>{searchQuery ? `Searching for “${searchQuery}”. ` : "Searching from your approved purchase request. "}PactPay evaluates the live catalog against your locked rules before the agent chooses a product.</p>
                 </div>
                 {running ? <span className="pp-badge pp-badge-info"><span className="pp-spinner pp-spinner-dark" aria-hidden="true" /> Working</span> : finished ? <span className={`pp-badge ${hold ? "pp-badge-good" : "pp-badge-warn"}`}>{hold ? "Hold placed" : "No hold"}</span> : null}
               </div>

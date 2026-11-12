@@ -60,7 +60,7 @@ export async function POST(request: Request) {
   if (!approval) return Response.json({ error: "Those approved rules weren't found for your account." }, { status: 403 });
 
   const provider = resolveProvider(body.provider);
-  if (!provider) return Response.json({ error: "No Meta model is configured. Set MODEL_API_KEY (Meta Model API) or BASETEN_API_KEY (Muse Spark Open)." }, { status: 503 });
+  if (!provider) return Response.json({ error: "No AI model is configured. Set GROQ_API_KEY, MODEL_API_KEY or BASETEN_API_KEY." }, { status: 503 });
 
   const phase = body.phase === "settle" ? "settle" : "shop";
   const transactionId = typeof body.transactionId === "string" ? body.transactionId : "";
@@ -95,7 +95,7 @@ export async function POST(request: Request) {
     if (name === "shortlist") {
       const asked = String(args.query ?? "").trim();
       if (preflightShortlist && (!asked || asked.toLowerCase() === preflightQuery.toLowerCase())) return preflightShortlist;
-      // Muse may refine the product phrase, but all hard rules remain server-bound to the approved Pact.
+      // The agent may refine the product phrase, but all hard rules remain server-bound to the approved Pact.
       return gateway("POST", "/api/agent/v1/shortlist", { query: asked || searchQuery });
     }
     if (name === "hold_payment") {
@@ -157,7 +157,7 @@ export async function POST(request: Request) {
           },
         });
       } catch (error) {
-        console.error("Muse agent failed", error instanceof Error ? error.message : "unknown");
+        console.error("AI shopping agent failed", error instanceof Error ? error.message : "unknown");
         send({ type: "error", message: error instanceof Error ? error.message.slice(0, 200) : "The agent stopped unexpectedly." });
       } finally {
         try { controller.close(); } catch { /* already closed */ }

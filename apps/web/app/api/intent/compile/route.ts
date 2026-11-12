@@ -8,7 +8,7 @@ import { aiTimeoutMs, callModel, parseModelJson, resolveProvider } from "../../.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Meta's strict structured output (response_format json_schema) wants every property required and every
+// Strict structured output (response_format json_schema) wants every property required and every
 // object to set additionalProperties:false. Domain-level limits are enforced
 // again by normalizeIntentCompilation at PactPay's trust boundary.
 const MODEL_SCHEMA = {
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
 
   const provider = resolveProvider();
   if (!provider) {
-    return fallbackResponse(intent, "No Meta model is configured (set MODEL_API_KEY).");
+    return fallbackResponse(intent, "No AI model is configured (set GROQ_API_KEY or MODEL_API_KEY).");
   }
   const timeoutMs = aiTimeoutMs(25_000, 5_000, 45_000);
   const system = [

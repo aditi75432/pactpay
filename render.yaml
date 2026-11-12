@@ -24,6 +24,20 @@ services:
         sync: false
       - key: CHANNEL3_API_KEY
         sync: false
+      - key: AI_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: GROQ_VISION_MODEL
+        value: qwen/qwen3.8-27b
+      - key: GROQ_STT_MODEL
+        value: whisper-large-v3-turbo
+      - key: GROQ_TIMEOUT_MS
+        value: "12000"
       - key: MODEL_API_KEY        # Meta Model API key (Muse Spark, Muse Voice Transcribe)
         sync: false
       - key: META_MODEL

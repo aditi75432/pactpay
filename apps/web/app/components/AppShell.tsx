@@ -23,8 +23,8 @@ const NAV = [
 type Me = { authenticated: boolean; username: string | null; loginRequired: boolean };
 type AiStatus = { configured: boolean; providers: Array<{ id: string; modelLabel: string; model: string; openWeights: boolean }>; crossModel: boolean };
 
-/** Always-visible proof of which Meta model is behind the app right now. */
-function MuseChip() {
+/** Always-visible indication of the models configured for this deployment. */
+function AiChip() {
   const [status, setStatus] = useState<AiStatus | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -32,10 +32,10 @@ function MuseChip() {
     return () => { cancelled = true; };
   }, []);
   if (!status) return null;
-  const label = status.crossModel ? `${status.providers[0]?.modelLabel ?? "Muse"} + Open` : status.providers[0]?.modelLabel ?? "Muse";
   const names = status.providers.map((p) => p.modelLabel).join(" + ");
+  const label = names || "AI";
   return (
-    <span className="pp-muse-chip" data-off={!status.configured} title={status.configured ? `AI calls in this app run on: ${names}` : "No Meta model is configured: the app uses its basic local parser."}>
+    <span className="pp-muse-chip" data-off={!status.configured} title={status.configured ? `AI calls in this app use: ${names}` : "No AI provider is configured: the app uses its basic local parser."}>
       <i aria-hidden="true" />{status.configured ? `AI · ${label}` : "AI model not set up"}
     </span>
   );
@@ -71,7 +71,7 @@ export default function AppShell({ children, narrow = false }: { children: React
             })}
           </nav>
           <div className="pp-header-right">
-          <MuseChip />
+          <AiChip />
           <span className="pp-testmode" title="Payments use PayPal Sandbox test money only."><i aria-hidden="true" />Test mode · no real money</span>
           {me?.authenticated ? (
             <span className="pp-small" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>

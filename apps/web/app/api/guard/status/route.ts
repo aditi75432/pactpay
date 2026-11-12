@@ -1,6 +1,6 @@
 import { parseBearerKey } from "@pactpay/pact-core/agent-key";
 import { inspectionRulesFor } from "@pactpay/pact-core/checkout-inspection";
-import { configuredProviders } from "../../../../../../lib/llm-provider";
+import { resolveVisionProvider } from "../../../../../../lib/llm-provider";
 import { resolveAgentKey } from "../../../../../../lib/agent-keys";
 import { getPactApproval } from "../../../../../../lib/pact-approvals";
 import { resolveGuardDevice } from "../../../../../../lib/guard-devices";
@@ -18,7 +18,7 @@ export function OPTIONS() {
 export async function GET(request: Request) {
   const limited = enforceRateLimit(request, "guard-status", 120, 10 * 60_000);
   if (limited) { limited.headers.set("Access-Control-Allow-Origin", "*"); return limited; }
-  const vision = configuredProviders().length > 0;
+  const vision = resolveVisionProvider() !== null;
   const deviceToken = request.headers.get(DEVICE_HEADER);
   let linked = false;
   if (deviceToken) {

@@ -2,7 +2,7 @@ import { modelDisplayName } from "@pactpay/pact-core/ai-labels";
 import { inspectionRulesFor, type CheckoutReading, type InspectionRule } from "@pactpay/pact-core/checkout-inspection";
 import { budgetRules, guardPage, parsePageEvidence } from "@pactpay/pact-core/page-guard";
 import { parseBearerKey } from "@pactpay/pact-core/agent-key";
-import { aiTimeoutMs, resolveProvider } from "../../../../../../lib/llm-provider";
+import { aiTimeoutMs, resolveVisionProvider } from "../../../../../../lib/llm-provider";
 import { resolveAgentKey } from "../../../../../../lib/agent-keys";
 import { getPactApproval } from "../../../../../../lib/pact-approvals";
 import { safePageLocation, saveGuardCheck } from "../../../../../../lib/guard-checks";
@@ -88,8 +88,8 @@ export async function POST(request: Request) {
     if (!image) visionNote = "The screenshot wasn't a PNG, JPEG or WebP data URL, so only the code reader ran.";
     else if (Math.floor((image[2]!.length * 3) / 4) > MAX_IMAGE_BYTES) visionNote = "The screenshot was over 4 MB, so only the code reader ran.";
     else {
-      const provider = resolveProvider(undefined);
-      if (!provider) visionNote = "No AI vision model is configured on this server, so only the code reader ran.";
+      const provider = resolveVisionProvider();
+      if (!provider) visionNote = "No vision-capable AI model is configured, so only the code reader ran.";
       else {
         try {
           const result = await readPage(provider, body.screenshot as string, "Reader: transcribe this checkout independently. Read the merchant, currency, item price, shipping, tax and total from the same order summary. Include every fee, and copy all fine print exactly.", aiTimeoutMs(40_000, 8_000, 60_000));
