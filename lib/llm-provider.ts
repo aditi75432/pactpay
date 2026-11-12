@@ -138,15 +138,56 @@ function contentText(value: unknown): string {
   return "";
 }
 
+// async function providerError(response: Response): Promise<string> {
+//   try {
+//     const payload = await response.clone().json() as { error?: { message?: unknown; code?: unknown } | string };
+//     const error = payload.error;
+//     if (typeof error === "string") return error.slice(0, 400);
+//     if (error && typeof error === "object" && typeof error.message === "string") return error.message.slice(0, 400);
+//   } catch { /* not JSON */ }
+//   return `HTTP ${response.status}`;
+// }
+
 async function providerError(response: Response): Promise<string> {
   try {
-    const payload = await response.clone().json() as { error?: { message?: unknown; code?: unknown } | string };
+    const payload = await response.clone().json() as {
+      error?: {
+        message?: unknown;
+        code?: unknown;
+        type?: unknown;
+        param?: unknown;
+      } | string;
+    };
+
     const error = payload.error;
-    if (typeof error === "string") return error.slice(0, 400);
-    if (error && typeof error === "object" && typeof error.message === "string") return error.message.slice(0, 400);
-  } catch { /* not JSON */ }
+
+    if (typeof error === "string") {
+      return error.slice(0, 400);
+    }
+
+    if (error && typeof error === "object") {
+      return [
+        typeof error.message === "string"
+          ? error.message.slice(0, 400)
+          : "",
+        typeof error.type === "string"
+          ? `type=${error.type}`
+          : "",
+        typeof error.code === "string"
+          ? `code=${error.code}`
+          : "",
+        typeof error.param === "string"
+          ? `param=${error.param}`
+          : ""
+      ].filter(Boolean).join(" | ");
+    }
+  } catch {
+    // Non-JSON response.
+  }
+
   return `HTTP ${response.status}`;
 }
+
 
 async function once(provider: Provider, request: ModelRequest): Promise<ModelReply> {
   const body: Record<string, unknown> = {
@@ -163,6 +204,7 @@ async function once(provider: Provider, request: ModelRequest): Promise<ModelRep
     if (provider.id === "meta") body.parallel_tool_calls = false;
   }
   try {
+    console.log("Model request:", JSON.stringify(provider.model), provider.baseUrl);
     const response = await fetch(`${provider.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${provider.apiKey}` },
