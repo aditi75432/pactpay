@@ -24,8 +24,9 @@ AI agents can already browse and check out. What they can't do reliably is notic
 
 ## Try it in 60 seconds (judges, start here)
 
-| | |
+|||
 |---|---|
+| **Demo** | https://www.youtube.com/watch?v=BvjhTtBcZxc |
 | **Live app** | https://pactpay-8ay2.onrender.com/ (free Render instance: the first load can take ~30 s to wake up) |
 | **App login** | `judge` / `PactPay-Judge-2026` (shared demo account; sign up for a private view) |
 | **PayPal Sandbox buyer** | `aditi@personal.mail.com` / `D<#k<y7X` (a throwaway sandbox account: test money only) |
